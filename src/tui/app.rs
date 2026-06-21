@@ -1,7 +1,6 @@
 use super::todo_list::TodoListView;
 use anyhow::Result;
 use futures::stream::StreamExt;
-use ratatui::layout::Layout;
 use std::io;
 
 use crossterm::event::{
@@ -34,7 +33,6 @@ pub fn render_app(app: &mut App, frame: &mut ratatui::Frame) {
 async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     let mut app = App::default();
     terminal.draw(|frame| render_app(&mut app, frame))?;
-    let mut tick_interval = tokio::time::interval(std::time::Duration::from_secs(1));
     let mut terminal_events = EventStream::new();
     loop {
         tokio::select! {
@@ -43,7 +41,6 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     if let KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::CONTROL, .. } = key { break; }
                 }
             }
-            _ = tick_interval.tick() => {}
         }
     }
 
