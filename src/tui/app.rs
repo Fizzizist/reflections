@@ -37,9 +37,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     loop {
         tokio::select! {
             Some(Ok(terminal_event)) = terminal_events.next() => {
-                if let Event::Key(key) = terminal_event {
-                    if let KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::CONTROL, .. } = key { break; }
-                }
+                if let Event::Key(key) = terminal_event
+                    && let KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::CONTROL, .. } = key { break; }
             }
         }
     }
