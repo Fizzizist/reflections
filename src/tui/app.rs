@@ -62,3 +62,21 @@ pub async fn run() -> Result<()> {
     terminal.show_cursor()?;
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use ratatui::backend::TestBackend;
+
+    use super::*;
+
+    #[test]
+    fn empty_app_render() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("terminal creation");
+        let mut app = App::default();
+        terminal
+            .draw(|frame| render_app(&mut app, frame))
+            .expect("failed to draw?");
+        insta::assert_snapshot!("new default app open", terminal.backend());
+    }
+}
