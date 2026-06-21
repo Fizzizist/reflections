@@ -42,3 +42,37 @@ cargo insta review                   # Review/accept snapshot test changes
 cargo clippy                         # Lint
 cargo fmt                            # Format
 ```
+
+## Architecture
+
+The Reflections application is opinionated about keeping layers and abstractions. There is a TUI and a
+CLI frontend, that should only interact with the outer service layer. The services contain the 
+application logic and keep state via the repositories. Repositories are the abstraction layer around the 
+database.
+
+### TUI
+
+Inside the `tui` module is all of the ratatui widgets for display. The root struct is App, which
+is fed a list of services in order to enact application logic. No application logic lives inside
+the tui, it is just build to display. Any action performed by a user in the TUI is routed to a 
+service to actually enact it.
+
+### CLI
+
+The `cli` module is for performing 1-time cli commands to services. A cli command should instantiate
+and enact actions on services, similar to the tui except it is interacting with the command rather
+that the tui interface.
+
+### Service
+
+Services hold a clone of the database connection and perform operations across repositories. 
+If database operations are involved, the service function should open a transaction and perform.
+All of the repository-related steps before committing it. All application logic should live in the
+service layer.
+
+### Repositories
+
+Repositories are responsible for carrying out database operations on a specific entity. It is the main
+translation layer between the model structs and the database tables. The 
+repository module for an entity should contain the SQL statements that get sent to the database.
+
