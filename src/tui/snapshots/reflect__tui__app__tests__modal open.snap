@@ -4,8 +4,8 @@ assertion_line: 185
 expression: terminal.backend()
 ---
 "┌TODO List─────────────────────────────────────────────────────────────────────┐"
-"│[New] buy groceries — 2024-01-15 05:30                                        │"
-"│                                                                              │"
+"│Status       Label                                          Created           │"
+"│NEW          buy groceries                                  2024-01-15 05:30  │"
 "│                                                                              │"
 "│                                                                              │"
 "│                                                                              │"

@@ -141,7 +141,7 @@ mod tests {
         let now = Utc::now();
         let tx = conn.transaction().await.expect("tx begin failed");
         tx.execute(
-            "INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at) VALUES (?, ?, 'Done', ?, ?)",
+            "INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at) VALUES (?, ?, 'DONE', ?, ?)",
             (
                 Uuid::now_v7().to_string(),
                 "done item".to_string(),
@@ -172,13 +172,13 @@ mod tests {
         let mut conn = svc.conn.clone();
         let tx = conn.transaction().await.expect("tx begin failed");
         tx.execute(
-            "INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at) VALUES (?, 'later_item', 'New', ?, ?)",
+            "INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at) VALUES (?, 'later_item', 'NEW', ?, ?)",
             (Uuid::now_v7().to_string(), later.to_rfc3339(), later.to_rfc3339()),
         )
         .await
         .expect("insert later failed");
         tx.execute(
-            "INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at) VALUES (?, 'earlier_item', 'New', ?, ?)",
+            "INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at) VALUES (?, 'earlier_item', 'NEW', ?, ?)",
             (Uuid::now_v7().to_string(), earlier.to_rfc3339(), earlier.to_rfc3339()),
         )
         .await

@@ -13,9 +13,9 @@ pub enum TodoStatus {
 impl fmt::Display for TodoStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TodoStatus::New => write!(f, "New"),
-            TodoStatus::InProgress => write!(f, "InProgress"),
-            TodoStatus::Done => write!(f, "Done"),
+            TodoStatus::New => write!(f, "NEW"),
+            TodoStatus::InProgress => write!(f, "IN_PROGRESS"),
+            TodoStatus::Done => write!(f, "DONE"),
         }
     }
 }
@@ -25,9 +25,9 @@ impl FromStr for TodoStatus {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "New" => Ok(TodoStatus::New),
-            "InProgress" => Ok(TodoStatus::InProgress),
-            "Done" => Ok(TodoStatus::Done),
+            "NEW" => Ok(TodoStatus::New),
+            "IN_PROGRESS" => Ok(TodoStatus::InProgress),
+            "DONE" => Ok(TodoStatus::Done),
             other => Err(anyhow::anyhow!("invalid TodoStatus: {other}")),
         }
     }

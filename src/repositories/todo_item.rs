@@ -48,7 +48,7 @@ impl TodoItemRepository {
     }
 
     pub async fn list_active(&self) -> Result<Vec<TodoItem>> {
-        let sql = "SELECT todo_item_id, label, status, created_at, updated_at FROM todo_item WHERE status != 'Done' ORDER BY created_at ASC";
+        let sql = "SELECT todo_item_id, label, status, created_at, updated_at FROM todo_item WHERE status != 'DONE' ORDER BY created_at ASC";
         let mut rows = self.conn.query(sql, ()).await?;
 
         let mut items = Vec::new();
