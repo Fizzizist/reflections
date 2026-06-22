@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use turso::{Connection, transaction::Transaction};
 use uuid::Uuid;
 
@@ -11,7 +11,7 @@ fn parse_timestamp(s: &str) -> Result<DateTime<Utc>> {
         return Ok(dt.with_timezone(&Utc));
     }
     let naive = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")?;
-    Ok(Utc.from_utc_datetime(&naive))
+    Ok(naive.and_utc())
 }
 
 pub struct TodoItemRepository {

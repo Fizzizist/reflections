@@ -101,3 +101,151 @@ impl InputModal {
         frame.render_widget(paragraph, inner);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyModifiers;
+
+    fn key_char(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+    }
+
+    fn key_enter() -> KeyEvent {
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+    }
+
+    fn key_esc() -> KeyEvent {
+        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
+    }
+
+    fn key_backspace() -> KeyEvent {
+        KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)
+    }
+
+    fn key_left() -> KeyEvent {
+        KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)
+    }
+
+    fn key_right() -> KeyEvent {
+        KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn enter_returns_buffer() {
+        let mut modal = InputModal::new();
+        modal.open();
+        modal.handle_key(key_char('h'));
+        modal.handle_key(key_char('e'));
+        modal.handle_key(key_char('l'));
+        modal.handle_key(key_char('l'));
+        modal.handle_key(key_char('o'));
+        let result = modal.handle_key(key_enter());
+        assert_eq!(result, Some("hello".to_string()));
+    }
+
+    #[test]
+    fn esc_closes_modal_and_returns_none() {
+        let mut modal = InputModal::new();
+        modal.open();
+        assert!(modal.is_active());
+        let result = modal.handle_key(key_esc());
+        assert_eq!(result, None);
+        assert!(!modal.is_active());
+    }
+
+    #[test]
+    fn backspace_removes_char_before_cursor() {
+        let mut modal = InputModal::new();
+        modal.open();
+        modal.handle_key(key_char('h'));
+        modal.handle_key(key_char('e'));
+        modal.handle_key(key_char('l'));
+        modal.handle_key(key_char('l'));
+        modal.handle_key(key_char('o'));
+        modal.handle_key(key_backspace());
+        assert_eq!(modal.buffer, "hell");
+    }
+
+    #[test]
+    fn backspace_at_cursor_zero_does_nothing() {
+        let mut modal = InputModal::new();
+        modal.open();
+        modal.handle_key(key_backspace());
+        assert_eq!(modal.buffer, "");
+        assert_eq!(modal.cursor_pos, 0);
+    }
+
+    #[test]
+    fn char_inserts_at_cursor() {
+        let mut modal = InputModal::new();
+        modal.open();
+        modal.handle_key(key_char('a'));
+        modal.handle_key(key_char('b'));
+        modal.handle_key(key_char('c'));
+        assert_eq!(modal.buffer, "abc");
+        assert_eq!(modal.cursor_pos, 3);
+    }
+
+    #[test]
+    fn char_inserts_at_cursor_position() {
+        let mut modal = InputModal::new();
+        modal.open();
+        modal.handle_key(key_char('a'));
+        modal.handle_key(key_char('c'));
+        modal.handle_key(key_left());
+        modal.handle_key(key_char('b'));
+        assert_eq!(modal.buffer, "abc");
+    }
+
+    #[test]
+    fn left_arrow_decrements_cursor() {
+        let mut modal = InputModal::new();
+        modal.open();
+        modal.handle_key(key_char('a'));
+        modal.handle_key(key_char('b'));
+        modal.handle_key(key_char('c'));
+        modal.handle_key(key_left());
+        assert_eq!(modal.cursor_pos, 2);
+    }
+
+    #[test]
+    fn left_arrow_at_zero_does_nothing() {
+        let mut modal = InputModal::new();
+        modal.open();
+        modal.handle_key(key_left());
+        assert_eq!(modal.cursor_pos, 0);
+    }
+
+    #[test]
+    fn right_arrow_increments_cursor() {
+        let mut modal = InputModal::new();
+        modal.open();
+        modal.handle_key(key_char('a'));
+        modal.handle_key(key_char('b'));
+        modal.handle_key(key_char('c'));
+        modal.handle_key(key_left());
+        modal.handle_key(key_left());
+        modal.handle_key(key_right());
+        assert_eq!(modal.cursor_pos, 2);
+    }
+
+    #[test]
+    fn right_arrow_at_end_does_nothing() {
+        let mut modal = InputModal::new();
+        modal.open();
+        modal.handle_key(key_char('a'));
+        modal.handle_key(key_char('b'));
+        modal.handle_key(key_char('c'));
+        modal.handle_key(key_right());
+        assert_eq!(modal.cursor_pos, 3);
+    }
+
+    #[test]
+    fn empty_buffer_enter_returns_empty_string() {
+        let mut modal = InputModal::new();
+        modal.open();
+        let result = modal.handle_key(key_enter());
+        assert_eq!(result, Some("".to_string()));
+    }
+}

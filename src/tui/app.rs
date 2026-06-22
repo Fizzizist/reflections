@@ -63,24 +63,35 @@ async fn run_app(
     let mut terminal_events = EventStream::new();
     loop {
         tokio::select! {
-            Some(Ok(terminal_event)) = terminal_events.next() => {
-                if let Event::Key(key) = terminal_event {
-                    if app.input_modal.is_active() {
-                        if let Some(input) = app.input_modal.handle_key(key) {
-                            if !input.is_empty() {
-                                app.submit_todo(&input).await?;
+            event = terminal_events.next() => {
+                match event {
+                    Some(Ok(terminal_event)) => {
+                        if let Event::Key(key) = terminal_event {
+                            if app.input_modal.is_active() {
+                                if let Some(input) = app.input_modal.handle_key(key) {
+                                    let trimmed = input.trim();
+                                    if !trimmed.is_empty() {
+                                        app.submit_todo(trimmed).await?;
+                                    }
+                                    app.input_modal.close();
+                                }
+                                terminal.draw(|frame| render_app(&mut app, frame))?;
+                            } else {
+                                if let KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::CONTROL, .. } = key {
+                                    break;
+                                }
+                                if let KeyCode::Char('a') = key.code {
+                                    app.input_modal.open();
+                                    terminal.draw(|frame| render_app(&mut app, frame))?;
+                                }
                             }
-                            app.input_modal.close();
                         }
-                        terminal.draw(|frame| render_app(&mut app, frame))?;
-                    } else {
-                        if let KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::CONTROL, .. } = key {
-                            break;
-                        }
-                        if let KeyCode::Char('a') = key.code {
-                            app.input_modal.open();
-                            terminal.draw(|frame| render_app(&mut app, frame))?;
-                        }
+                    }
+                    Some(Err(e)) => {
+                        return Err(anyhow::anyhow!("terminal event stream error: {e}"));
+                    }
+                    None => {
+                        break;
                     }
                 }
             }

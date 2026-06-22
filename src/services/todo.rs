@@ -190,4 +190,61 @@ mod tests {
         assert_eq!(items[0].label, "earlier_item");
         assert_eq!(items[1].label, "later_item");
     }
+
+    #[tokio::test]
+    async fn create_todo_item_is_atomic() {
+        let mut svc = setup().await;
+        let item = svc
+            .create_todo_item("atomic test")
+            .await
+            .expect("create failed");
+
+        let items = svc.list_todo_items().await.expect("list failed");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "atomic test");
+
+        let mut rows = svc
+            .conn
+            .query(
+                "SELECT entity_id FROM event WHERE entity_id = ?",
+                [item.id.to_string()],
+            )
+            .await
+            .expect("query failed");
+        let row = rows
+            .next()
+            .await
+            .expect("row fetch failed")
+            .expect("event not found");
+        let entity_id_str = row
+            .get_value(0)
+            .expect("value extraction failed")
+            .as_text()
+            .expect("expected text")
+            .to_string();
+        assert_eq!(entity_id_str, item.id.to_string());
+    }
+
+    #[tokio::test]
+    async fn create_todo_item_with_special_chars() {
+        let mut svc = setup().await;
+        let label = "buy milk & eggs (2x) — urgent!";
+        svc.create_todo_item(label).await.expect("create failed");
+
+        let items = svc.list_todo_items().await.expect("list failed");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, label);
+    }
+
+    #[tokio::test]
+    async fn create_todo_item_with_long_label() {
+        let mut svc = setup().await;
+        let label = "a".repeat(250);
+        svc.create_todo_item(&label).await.expect("create failed");
+
+        let items = svc.list_todo_items().await.expect("list failed");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label.len(), 250);
+        assert_eq!(items[0].label, label);
+    }
 }
