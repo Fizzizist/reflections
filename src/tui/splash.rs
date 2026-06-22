@@ -40,11 +40,10 @@ pub fn render(frame: &mut Frame, area: Rect, screen: &StartScreen) {
         if x >= area.x + area.width || y >= area.y + area.height {
             continue;
         }
-        let buf_cell = buf.cell_mut((x, y)).unwrap_or_else(|| {
-            // Safety: we bounds-checked above; if the cell is somehow missing
-            // just skip this iteration via a panic-free path.
-            panic!("start_screen: cell ({x},{y}) out of buffer bounds");
-        });
+        let buf_cell = match buf.cell_mut((x, y)) {
+            Some(cell) => cell,
+            None => continue,
+        };
         buf_cell.set_char(cell.ch);
         let style = match cell.kind {
             CellKind::Art => Style::default().fg(rgb_to_color(screen.palette.text_dim)),
