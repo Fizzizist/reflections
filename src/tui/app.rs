@@ -71,8 +71,8 @@ async fn run_app(
                                 app.submit_todo(&input).await?;
                             }
                             app.input_modal.close();
-                            terminal.draw(|frame| render_app(&mut app, frame))?;
                         }
+                        terminal.draw(|frame| render_app(&mut app, frame))?;
                     } else {
                         if let KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::CONTROL, .. } = key {
                             break;
