@@ -1,10 +1,8 @@
 use anyhow::Result;
-use chrono::Utc;
 use turso::Connection;
-use uuid::Uuid;
 
 use crate::models::event::EventType;
-use crate::models::todo_item::{TodoItem, TodoStatus};
+use crate::models::todo_item::TodoItem;
 use crate::repositories;
 
 pub struct TodoService {
@@ -17,31 +15,12 @@ impl TodoService {
     }
 
     pub async fn create_todo_item(&mut self, label: &str) -> Result<TodoItem> {
-        let now = Utc::now();
-        let todo_id = Uuid::now_v7();
-        let event_id = Uuid::now_v7();
-
         let tx = self.conn.transaction().await?;
-        repositories::todo_item::insert(&tx, todo_id, label, &TodoStatus::New, &now, &now).await?;
-        repositories::event::insert(
-            &tx,
-            event_id,
-            todo_id,
-            &EventType::TodoItemCreated,
-            "{}",
-            &now,
-            &now,
-        )
-        .await?;
+        let todo_item = repositories::todo_item::insert(&tx, label).await?;
+        repositories::event::insert(&tx, todo_item.id, &EventType::TodoItemCreated, "{}").await?;
         tx.commit().await?;
 
-        Ok(TodoItem {
-            id: todo_id,
-            label: label.to_string(),
-            status: TodoStatus::New,
-            created_at: now,
-            updated_at: now,
-        })
+        Ok(todo_item)
     }
 
     pub async fn list_todo_items(&self) -> Result<Vec<TodoItem>> {

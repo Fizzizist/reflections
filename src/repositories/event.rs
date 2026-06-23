@@ -1,30 +1,27 @@
 use anyhow::Result;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use turso::transaction::Transaction;
 use uuid::Uuid;
 
 use crate::models::event::EventType;
 
-#[allow(clippy::too_many_arguments)]
 pub async fn insert(
     tx: &Transaction<'_>,
-    event_id: Uuid,
     entity_id: Uuid,
     event_type: &EventType,
     metadata: &str,
-    created_at: &DateTime<Utc>,
-    updated_at: &DateTime<Utc>,
 ) -> Result<()> {
+    let now = Utc::now().to_rfc3339();
     let sql = "INSERT INTO event (event_id, entity_id, event_type, metadata, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)";
     tx.execute(
         sql,
         (
-            event_id.to_string(),
+            Uuid::now_v7().to_string(),
             entity_id.to_string(),
             event_type.to_string(),
             metadata.to_string(),
-            created_at.to_rfc3339(),
-            updated_at.to_rfc3339(),
+            now.clone(),
+            now,
         ),
     )
     .await?;

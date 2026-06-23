@@ -1,6 +1,6 @@
 use anyhow::Result;
 use chrono::{DateTime, NaiveDateTime, Utc};
-use turso::{Connection, transaction::Transaction};
+use turso::{Connection, Error::QueryReturnedNoRows, transaction::Transaction};
 use uuid::Uuid;
 
 use crate::models::todo_item::{TodoItem, TodoStatus};
@@ -14,28 +14,45 @@ fn parse_timestamp(s: &str) -> Result<DateTime<Utc>> {
     Ok(naive.and_utc())
 }
 
-#[allow(clippy::too_many_arguments)]
-pub async fn insert(
-    tx: &Transaction<'_>,
-    id: Uuid,
-    label: &str,
-    status: &TodoStatus,
-    created_at: &DateTime<Utc>,
-    updated_at: &DateTime<Utc>,
-) -> Result<()> {
-    let sql = "INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)";
-    tx.execute(
-        sql,
-        (
-            id.to_string(),
-            label.to_string(),
-            status.to_string(),
-            created_at.to_rfc3339(),
-            updated_at.to_rfc3339(),
-        ),
-    )
-    .await?;
-    Ok(())
+pub async fn insert(tx: &Transaction<'_>, label: &str) -> Result<TodoItem> {
+    let sql = r#"INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at) 
+                 VALUES (?, ?, ?, ?, ?)"
+                 RETURNING todo_id, label, status, created_at, updated_at;
+              "#;
+    let now = Utc::now().to_rfc3339();
+    let id = Uuid::now_v7();
+    let mut rows = tx
+        .query(
+            sql,
+            (
+                id.clone().to_string(),
+                label.to_string(),
+                TodoStatus::New.to_string(),
+                now.clone(),
+                now,
+            ),
+        )
+        .await?;
+    if let Some(row) = rows.next().await? {
+        let id_str: String = row.get(0)?;
+        let id = Uuid::parse_str(&id_str)?;
+        let label: String = row.get(1)?;
+        let status_str: String = row.get(2)?;
+        let status = TodoStatus::from_str(&status_str)?;
+        let created_str: String = row.get(3)?;
+        let created_at = parse_timestamp(&created_str)?;
+        let updated_str: String = row.get(4)?;
+        let updated_at = parse_timestamp(&updated_str)?;
+
+        return Ok(TodoItem {
+            id,
+            label,
+            status,
+            created_at,
+            updated_at,
+        });
+    }
+    Err(QueryReturnedNoRows.into())
 }
 
 pub async fn list_active(conn: &Connection) -> Result<Vec<TodoItem>> {
