@@ -5,24 +5,15 @@ use uuid::Uuid;
 
 use crate::models::event::EventType;
 use crate::models::todo_item::{TodoItem, TodoStatus};
-use crate::repositories::event::EventRepository;
-use crate::repositories::todo_item::TodoItemRepository;
+use crate::repositories;
 
 pub struct TodoService {
     conn: Connection,
-    todo_item_repo: TodoItemRepository,
-    event_repo: EventRepository,
 }
 
 impl TodoService {
     pub fn new(conn: Connection) -> Self {
-        let todo_item_repo = TodoItemRepository::new(conn.clone());
-        let event_repo = EventRepository::new(conn.clone());
-        Self {
-            conn,
-            todo_item_repo,
-            event_repo,
-        }
+        Self { conn }
     }
 
     pub async fn create_todo_item(&mut self, label: &str) -> Result<TodoItem> {
@@ -31,20 +22,17 @@ impl TodoService {
         let event_id = Uuid::now_v7();
 
         let tx = self.conn.transaction().await?;
-        self.todo_item_repo
-            .insert(&tx, todo_id, label, &TodoStatus::New, &now, &now)
-            .await?;
-        self.event_repo
-            .insert(
-                &tx,
-                event_id,
-                todo_id,
-                &EventType::TodoItemCreated,
-                "{}",
-                &now,
-                &now,
-            )
-            .await?;
+        repositories::todo_item::insert(&tx, todo_id, label, &TodoStatus::New, &now, &now).await?;
+        repositories::event::insert(
+            &tx,
+            event_id,
+            todo_id,
+            &EventType::TodoItemCreated,
+            "{}",
+            &now,
+            &now,
+        )
+        .await?;
         tx.commit().await?;
 
         Ok(TodoItem {
@@ -57,7 +45,7 @@ impl TodoService {
     }
 
     pub async fn list_todo_items(&self) -> Result<Vec<TodoItem>> {
-        self.todo_item_repo.list_active().await
+        repositories::todo_item::list_active(&self.conn).await
     }
 }
 
@@ -65,6 +53,7 @@ impl TodoService {
 mod tests {
     use super::*;
     use crate::schema;
+    use chrono::Utc;
 
     async fn setup() -> TodoService {
         let db = turso::Builder::new_local(":memory:")
@@ -173,13 +162,21 @@ mod tests {
         let tx = conn.transaction().await.expect("tx begin failed");
         tx.execute(
             "INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at) VALUES (?, 'later_item', 'NEW', ?, ?)",
-            (Uuid::now_v7().to_string(), later.to_rfc3339(), later.to_rfc3339()),
+            (
+                Uuid::now_v7().to_string(),
+                later.to_rfc3339(),
+                later.to_rfc3339(),
+            ),
         )
         .await
         .expect("insert later failed");
         tx.execute(
             "INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at) VALUES (?, 'earlier_item', 'NEW', ?, ?)",
-            (Uuid::now_v7().to_string(), earlier.to_rfc3339(), earlier.to_rfc3339()),
+            (
+                Uuid::now_v7().to_string(),
+                earlier.to_rfc3339(),
+                earlier.to_rfc3339(),
+            ),
         )
         .await
         .expect("insert earlier failed");

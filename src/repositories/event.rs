@@ -5,42 +5,30 @@ use uuid::Uuid;
 
 use crate::models::event::EventType;
 
-pub struct EventRepository {
-    #[allow(dead_code)]
-    conn: turso::Connection,
-}
-
-impl EventRepository {
-    pub fn new(conn: turso::Connection) -> Self {
-        Self { conn }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub async fn insert(
-        &self,
-        tx: &Transaction<'_>,
-        event_id: Uuid,
-        entity_id: Uuid,
-        event_type: &EventType,
-        metadata: &str,
-        created_at: &DateTime<Utc>,
-        updated_at: &DateTime<Utc>,
-    ) -> Result<()> {
-        let sql = "INSERT INTO event (event_id, entity_id, event_type, metadata, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)";
-        tx.execute(
-            sql,
-            (
-                event_id.to_string(),
-                entity_id.to_string(),
-                event_type.to_string(),
-                metadata.to_string(),
-                created_at.to_rfc3339(),
-                updated_at.to_rfc3339(),
-            ),
-        )
-        .await?;
-        Ok(())
-    }
+#[allow(clippy::too_many_arguments)]
+pub async fn insert(
+    tx: &Transaction<'_>,
+    event_id: Uuid,
+    entity_id: Uuid,
+    event_type: &EventType,
+    metadata: &str,
+    created_at: &DateTime<Utc>,
+    updated_at: &DateTime<Utc>,
+) -> Result<()> {
+    let sql = "INSERT INTO event (event_id, entity_id, event_type, metadata, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)";
+    tx.execute(
+        sql,
+        (
+            event_id.to_string(),
+            entity_id.to_string(),
+            event_type.to_string(),
+            metadata.to_string(),
+            created_at.to_rfc3339(),
+            updated_at.to_rfc3339(),
+        ),
+    )
+    .await?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -48,7 +36,7 @@ mod tests {
     use super::*;
     use crate::schema;
 
-    async fn setup() -> (turso::Connection, EventRepository) {
+    async fn setup() -> turso::Connection {
         let db = turso::Builder::new_local(":memory:")
             .experimental_custom_types(true)
             .build()
@@ -58,19 +46,18 @@ mod tests {
         schema::init_schema(&conn)
             .await
             .expect("schema init failed");
-        let repo = EventRepository::new(conn.clone());
-        (conn, repo)
+        conn
     }
 
     #[tokio::test]
     async fn insert_event() {
-        let (mut conn, repo) = setup().await;
+        let mut conn = setup().await;
         let now = Utc::now();
         let entity_id = Uuid::now_v7();
         let event_id = Uuid::now_v7();
 
         let tx = conn.transaction().await.expect("tx begin failed");
-        repo.insert(
+        insert(
             &tx,
             event_id,
             entity_id,
