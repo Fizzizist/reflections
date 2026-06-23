@@ -1,5 +1,7 @@
 use super::splash;
 use crate::models::todo_item::{TodoItem, TodoStatus};
+use crate::services::todo::TodoService;
+use anyhow::Result;
 use chrono::Local;
 use ratatui::{
     Frame,
@@ -9,13 +11,29 @@ use ratatui::{
 
 pub struct TodoListView {
     items: Vec<TodoItem>,
+    service: TodoService,
 }
 
 impl TodoListView {
-    pub fn new() -> Self {
-        Self { items: Vec::new() }
+    pub fn new(service: TodoService) -> Self {
+        Self {
+            items: Vec::new(),
+            service,
+        }
     }
 
+    pub async fn load_items(&mut self) -> Result<()> {
+        self.items = self.service.list_todo_items().await?;
+        Ok(())
+    }
+
+    pub async fn submit_todo(&mut self, label: &str) -> Result<()> {
+        self.service.create_todo_item(label).await?;
+        self.load_items().await?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
     pub fn set_items(&mut self, items: Vec<TodoItem>) {
         self.items = items;
     }

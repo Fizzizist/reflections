@@ -18,7 +18,6 @@ use ratatui::crossterm::terminal::{
 use ratatui::prelude::CrosstermBackend;
 
 pub struct App {
-    todo_service: TodoService,
     todo_list_view: TodoListView,
     input_modal: InputModal,
 }
@@ -26,22 +25,17 @@ pub struct App {
 impl App {
     pub fn new(todo_service: TodoService) -> Self {
         Self {
-            todo_service,
-            todo_list_view: TodoListView::new(),
+            todo_list_view: TodoListView::new(todo_service),
             input_modal: InputModal::new(),
         }
     }
 
     pub async fn load_items(&mut self) -> Result<()> {
-        let items = self.todo_service.list_todo_items().await?;
-        self.todo_list_view.set_items(items);
-        Ok(())
+        self.todo_list_view.load_items().await
     }
 
     pub async fn submit_todo(&mut self, label: &str) -> Result<()> {
-        self.todo_service.create_todo_item(label).await?;
-        self.load_items().await?;
-        Ok(())
+        self.todo_list_view.submit_todo(label).await
     }
 }
 
