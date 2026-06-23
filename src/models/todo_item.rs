@@ -33,12 +33,13 @@ impl FromStr for TodoStatus {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct TodoItem {
+    #[allow(dead_code)]
     pub id: Uuid,
     pub label: String,
     pub status: TodoStatus,
     pub created_at: DateTime<Utc>,
+    #[allow(dead_code)]
     pub updated_at: DateTime<Utc>,
 }
