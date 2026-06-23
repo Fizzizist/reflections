@@ -49,22 +49,12 @@ mod tests {
     #[tokio::test]
     async fn insert_event() {
         let mut conn = setup().await;
-        let now = Utc::now();
         let entity_id = Uuid::now_v7();
-        let event_id = Uuid::now_v7();
 
         let tx = conn.transaction().await.expect("tx begin failed");
-        insert(
-            &tx,
-            event_id,
-            entity_id,
-            &EventType::TodoItemCreated,
-            "{}",
-            &now,
-            &now,
-        )
-        .await
-        .expect("insert failed");
+        insert(&tx, entity_id, &EventType::TodoItemCreated, "{}")
+            .await
+            .expect("insert failed");
         tx.commit().await.expect("commit failed");
 
         let mut rows = conn

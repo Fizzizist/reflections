@@ -15,10 +15,9 @@ fn parse_timestamp(s: &str) -> Result<DateTime<Utc>> {
 }
 
 pub async fn insert(tx: &Transaction<'_>, label: &str) -> Result<TodoItem> {
-    let sql = r#"INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at) 
-                 VALUES (?, ?, ?, ?, ?)"
-                 RETURNING todo_id, label, status, created_at, updated_at;
-              "#;
+    let sql = r#"INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?)
+                 RETURNING todo_item_id, label, status, created_at, updated_at"#;
     let now = Utc::now().to_rfc3339();
     let id = Uuid::now_v7();
     let mut rows = tx
@@ -104,18 +103,8 @@ mod tests {
     #[tokio::test]
     async fn insert_todo_item() {
         let mut conn = setup().await;
-        let now = Utc::now();
         let tx = conn.transaction().await.expect("tx begin failed");
-        insert(
-            &tx,
-            Uuid::now_v7(),
-            "test item",
-            &TodoStatus::New,
-            &now,
-            &now,
-        )
-        .await
-        .expect("insert failed");
+        insert(&tx, "test item").await.expect("insert failed");
         tx.commit().await.expect("commit failed");
 
         let items = list_active(&conn).await.expect("list failed");
@@ -126,39 +115,21 @@ mod tests {
     #[tokio::test]
     async fn list_active_filters_done() {
         let mut conn = setup().await;
-        let now = Utc::now();
 
         let tx = conn.transaction().await.expect("tx begin failed");
-        insert(
-            &tx,
-            Uuid::now_v7(),
-            "new item",
-            &TodoStatus::New,
-            &now,
-            &now,
+        insert(&tx, "new item").await.expect("insert failed");
+        tx.execute(
+            "INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at) VALUES (?, 'in progress item', 'IN_PROGRESS', ?, ?)",
+            (Uuid::now_v7().to_string(), Utc::now().to_rfc3339(), Utc::now().to_rfc3339()),
         )
         .await
-        .expect("insert failed");
-        insert(
-            &tx,
-            Uuid::now_v7(),
-            "in progress item",
-            &TodoStatus::InProgress,
-            &now,
-            &now,
+        .expect("insert in progress failed");
+        tx.execute(
+            "INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at) VALUES (?, 'done item', 'DONE', ?, ?)",
+            (Uuid::now_v7().to_string(), Utc::now().to_rfc3339(), Utc::now().to_rfc3339()),
         )
         .await
-        .expect("insert failed");
-        insert(
-            &tx,
-            Uuid::now_v7(),
-            "done item",
-            &TodoStatus::Done,
-            &now,
-            &now,
-        )
-        .await
-        .expect("insert failed");
+        .expect("insert done failed");
         tx.commit().await.expect("commit failed");
 
         let items = list_active(&conn).await.expect("list failed");

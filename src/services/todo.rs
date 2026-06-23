@@ -31,8 +31,10 @@ impl TodoService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::todo_item::TodoStatus;
     use crate::schema;
     use chrono::Utc;
+    use uuid::Uuid;
 
     async fn setup() -> TodoService {
         let db = turso::Builder::new_local(":memory:")
