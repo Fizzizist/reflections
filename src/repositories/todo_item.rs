@@ -44,34 +44,14 @@ pub async fn list_active(conn: &Connection) -> Result<Vec<TodoItem>> {
 
     let mut items = Vec::new();
     while let Some(row) = rows.next().await? {
-        let id_str = row
-            .get_value(0)?
-            .as_text()
-            .ok_or_else(|| anyhow::anyhow!("todo_item_id is not text"))?
-            .to_string();
+        let id_str: String = row.get(0)?;
         let id = Uuid::parse_str(&id_str)?;
-        let label = row
-            .get_value(1)?
-            .as_text()
-            .ok_or_else(|| anyhow::anyhow!("label is not text"))?
-            .to_string();
-        let status_str = row
-            .get_value(2)?
-            .as_text()
-            .ok_or_else(|| anyhow::anyhow!("status is not text"))?
-            .to_string();
+        let label: String = row.get(1)?;
+        let status_str: String = row.get(2)?;
         let status = TodoStatus::from_str(&status_str)?;
-        let created_str = row
-            .get_value(3)?
-            .as_text()
-            .ok_or_else(|| anyhow::anyhow!("created_at is not text"))?
-            .to_string();
+        let created_str: String = row.get(3)?;
         let created_at = parse_timestamp(&created_str)?;
-        let updated_str = row
-            .get_value(4)?
-            .as_text()
-            .ok_or_else(|| anyhow::anyhow!("updated_at is not text"))?
-            .to_string();
+        let updated_str: String = row.get(4)?;
         let updated_at = parse_timestamp(&updated_str)?;
 
         items.push(TodoItem {
