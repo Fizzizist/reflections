@@ -38,21 +38,25 @@ impl TodoListView {
         self.load_items().await
     }
 
+    fn clamp_selected_index(&mut self) {
+        if self.items.is_empty() {
+            self.selected_index = None;
+        } else {
+            self.selected_index = Some(
+                self.selected_index
+                    .unwrap_or(0)
+                    .min(self.items.len().saturating_sub(1)),
+            );
+        }
+    }
+
     pub async fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
         if self.status_modal.is_active() {
             if let Some(status) = self.status_modal.handle_key(key) {
                 if let Some(id) = self.status_modal.target_item_id() {
                     self.service.update_todo_status(id, status).await?;
                     self.load_items().await?;
-                    if self.items.is_empty() {
-                        self.selected_index = None;
-                    } else {
-                        self.selected_index = Some(
-                            self.selected_index
-                                .unwrap_or(0)
-                                .min(self.items.len().saturating_sub(1)),
-                        );
-                    }
+                    self.clamp_selected_index();
                 }
                 self.status_modal.close();
             }
@@ -73,11 +77,17 @@ impl TodoListView {
         match key.code {
             KeyCode::Char('j') | KeyCode::Down if !self.items.is_empty() => {
                 let max = self.items.len().saturating_sub(1);
-                let new_idx = self.selected_index.unwrap_or(0).saturating_add(1).min(max);
+                let new_idx = match self.selected_index {
+                    None => 0,
+                    Some(idx) => idx.saturating_add(1).min(max),
+                };
                 self.selected_index = Some(new_idx);
             }
             KeyCode::Char('k') | KeyCode::Up if !self.items.is_empty() => {
-                let new_idx = self.selected_index.unwrap_or(0).saturating_sub(1);
+                let new_idx = match self.selected_index {
+                    None => 0,
+                    Some(idx) => idx.saturating_sub(1),
+                };
                 self.selected_index = Some(new_idx);
             }
             KeyCode::Char('u')
@@ -92,15 +102,7 @@ impl TodoListView {
             KeyCode::Char('A') => {
                 self.show_all = !self.show_all;
                 self.load_items().await?;
-                if self.items.is_empty() {
-                    self.selected_index = None;
-                } else {
-                    self.selected_index = Some(
-                        self.selected_index
-                            .unwrap_or(0)
-                            .min(self.items.len().saturating_sub(1)),
-                    );
-                }
+                self.clamp_selected_index();
             }
             _ => {}
         }
@@ -128,6 +130,7 @@ impl TodoListView {
                 .enumerate()
                 .map(|(i, item)| {
                     let local_time = item.created_at.with_timezone(&Local);
+                    let updated_time = item.updated_at.with_timezone(&Local);
                     let status_cell = match item.status {
                         TodoStatus::New => Cell::new("NEW"),
                         TodoStatus::InProgress => Cell::new("IN_PROGRESS"),
@@ -137,6 +140,7 @@ impl TodoListView {
                         status_cell,
                         Cell::new(item.label.clone()),
                         Cell::new(local_time.format("%Y-%m-%d %H:%M").to_string()),
+                        Cell::new(updated_time.format("%Y-%m-%d %H:%M").to_string()),
                     ]);
                     if Some(i) == self.selected_index {
                         row.style(Style::default().reversed())
@@ -152,6 +156,7 @@ impl TodoListView {
                     Constraint::Length(12),
                     Constraint::Min(20),
                     Constraint::Length(18),
+                    Constraint::Length(18),
                 ],
             )
             .header(
@@ -159,6 +164,7 @@ impl TodoListView {
                     Cell::new("Status"),
                     Cell::new("Label"),
                     Cell::new("Created"),
+                    Cell::new("Updated"),
                 ])
                 .style(Style::default().bold()),
             );
@@ -189,23 +195,22 @@ impl TodoListView {
         self.load_items().await?;
         Ok(())
     }
+}
 
-    #[cfg(test)]
+#[cfg(test)]
+impl TodoListView {
     pub fn set_items(&mut self, items: Vec<TodoItem>) {
         self.items = items;
     }
 
-    #[cfg(test)]
     pub fn open_modal(&mut self) {
         self.input_modal.open();
     }
 
-    #[cfg(test)]
     pub fn set_selected_index(&mut self, idx: usize) {
         self.selected_index = Some(idx);
     }
 
-    #[cfg(test)]
     pub fn open_status_modal(&mut self) {
         if let Some(item) = self.items.first() {
             self.status_modal.open(item.id, &item.status);
@@ -213,5 +218,21 @@ impl TodoListView {
             let dummy_id = uuid::Uuid::now_v7();
             self.status_modal.open(dummy_id, &TodoStatus::New);
         }
+    }
+
+    pub fn selected_index(&self) -> Option<usize> {
+        self.selected_index
+    }
+
+    pub fn is_status_modal_active(&self) -> bool {
+        self.status_modal.is_active()
+    }
+
+    pub fn is_show_all(&self) -> bool {
+        self.show_all
+    }
+
+    pub fn clamp_selected_index_for_test(&mut self) {
+        self.clamp_selected_index();
     }
 }

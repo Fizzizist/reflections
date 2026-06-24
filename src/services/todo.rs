@@ -329,4 +329,26 @@ mod tests {
             .expect("update failed");
         assert!(updated.updated_at > original_updated);
     }
+
+    #[tokio::test]
+    async fn update_todo_status_reverse_transition() {
+        let mut svc = setup().await;
+        let item = svc
+            .create_todo_item("test item")
+            .await
+            .expect("create failed");
+        assert_eq!(item.status, TodoStatus::New);
+
+        let done = svc
+            .update_todo_status(item.id, TodoStatus::Done)
+            .await
+            .expect("update to Done failed");
+        assert_eq!(done.status, TodoStatus::Done);
+
+        let back_to_new = svc
+            .update_todo_status(item.id, TodoStatus::New)
+            .await
+            .expect("update to New failed");
+        assert_eq!(back_to_new.status, TodoStatus::New);
+    }
 }

@@ -207,4 +207,149 @@ mod tests {
             .expect("failed to draw");
         insta::assert_snapshot!("status modal open", terminal.backend());
     }
+
+    #[tokio::test]
+    async fn j_selects_first_item() {
+        let mut app = test_app().await;
+        app.todo_list_view
+            .set_items(vec![fixed_item("task 1"), fixed_item("task 2")]);
+
+        let key_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
+        app.todo_list_view
+            .handle_key(key_j)
+            .await
+            .expect("handle_key failed");
+
+        assert_eq!(app.todo_list_view.selected_index(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn j_then_j_selects_second_item() {
+        let mut app = test_app().await;
+        app.todo_list_view
+            .set_items(vec![fixed_item("task 1"), fixed_item("task 2")]);
+
+        let key_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
+        app.todo_list_view
+            .handle_key(key_j)
+            .await
+            .expect("handle_key failed");
+        app.todo_list_view
+            .handle_key(key_j)
+            .await
+            .expect("handle_key failed");
+
+        assert_eq!(app.todo_list_view.selected_index(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn k_at_first_stays_at_first() {
+        let mut app = test_app().await;
+        app.todo_list_view
+            .set_items(vec![fixed_item("task 1"), fixed_item("task 2")]);
+
+        let key_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
+        let key_k = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE);
+        app.todo_list_view
+            .handle_key(key_j)
+            .await
+            .expect("handle_key failed");
+        app.todo_list_view
+            .handle_key(key_k)
+            .await
+            .expect("handle_key failed");
+
+        assert_eq!(app.todo_list_view.selected_index(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn u_opens_status_modal() {
+        let mut app = test_app().await;
+        app.todo_list_view.set_items(vec![fixed_item("task 1")]);
+
+        let key_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
+        let key_u = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::NONE);
+        app.todo_list_view
+            .handle_key(key_j)
+            .await
+            .expect("handle_key failed");
+        app.todo_list_view
+            .handle_key(key_u)
+            .await
+            .expect("handle_key failed");
+
+        assert!(app.todo_list_view.is_status_modal_active());
+    }
+
+    #[tokio::test]
+    async fn a_toggles_show_all() {
+        let mut app = test_app().await;
+        app.todo_list_view.set_items(vec![fixed_item("task 1")]);
+
+        let key_a = KeyEvent::new(KeyCode::Char('A'), KeyModifiers::NONE);
+        app.todo_list_view
+            .handle_key(key_a)
+            .await
+            .expect("handle_key failed");
+
+        assert!(app.todo_list_view.is_show_all());
+    }
+
+    #[tokio::test]
+    async fn j_on_empty_list_does_nothing() {
+        let mut app = test_app().await;
+        app.init().await.expect("init failed");
+
+        let key_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
+        app.todo_list_view
+            .handle_key(key_j)
+            .await
+            .expect("handle_key failed");
+
+        assert_eq!(app.todo_list_view.selected_index(), None);
+    }
+
+    #[tokio::test]
+    async fn k_on_empty_list_does_nothing() {
+        let mut app = test_app().await;
+        app.init().await.expect("init failed");
+
+        let key_k = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE);
+        app.todo_list_view
+            .handle_key(key_k)
+            .await
+            .expect("handle_key failed");
+
+        assert_eq!(app.todo_list_view.selected_index(), None);
+    }
+
+    #[tokio::test]
+    async fn u_on_empty_list_does_nothing() {
+        let mut app = test_app().await;
+        app.init().await.expect("init failed");
+
+        let key_u = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::NONE);
+        app.todo_list_view
+            .handle_key(key_u)
+            .await
+            .expect("handle_key failed");
+
+        assert!(!app.todo_list_view.is_status_modal_active());
+    }
+
+    #[tokio::test]
+    async fn selection_clamped_after_item_disappears() {
+        let mut app = test_app().await;
+        let item1 = fixed_item("task 1");
+        let item2 = fixed_item("task 2");
+        app.todo_list_view.set_items(vec![item1, item2]);
+
+        app.todo_list_view.set_selected_index(1);
+        assert_eq!(app.todo_list_view.selected_index(), Some(1));
+
+        app.todo_list_view.set_items(vec![fixed_item("task 1")]);
+        app.todo_list_view.clamp_selected_index_for_test();
+
+        assert_eq!(app.todo_list_view.selected_index(), Some(0));
+    }
 }

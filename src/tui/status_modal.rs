@@ -131,6 +131,14 @@ mod tests {
         KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
     }
 
+    fn key_down() -> KeyEvent {
+        KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)
+    }
+
+    fn key_up() -> KeyEvent {
+        KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)
+    }
+
     #[test]
     fn open_pre_selects_current_status() {
         let item_id = Uuid::now_v7();
@@ -232,5 +240,31 @@ mod tests {
         let result = modal.handle_key(key_char('q'));
         assert_eq!(result, None);
         assert!(!modal.is_active());
+    }
+
+    #[test]
+    fn down_arrow_navigates_down() {
+        let mut modal = StatusModal::new();
+        modal.open(Uuid::now_v7(), &TodoStatus::New);
+        assert_eq!(modal.selected_index, 0);
+
+        modal.handle_key(key_down());
+        assert_eq!(modal.selected_index, 1);
+
+        modal.handle_key(key_down());
+        assert_eq!(modal.selected_index, 2);
+    }
+
+    #[test]
+    fn up_arrow_navigates_up() {
+        let mut modal = StatusModal::new();
+        modal.open(Uuid::now_v7(), &TodoStatus::Done);
+        assert_eq!(modal.selected_index, 2);
+
+        modal.handle_key(key_up());
+        assert_eq!(modal.selected_index, 1);
+
+        modal.handle_key(key_up());
+        assert_eq!(modal.selected_index, 0);
     }
 }

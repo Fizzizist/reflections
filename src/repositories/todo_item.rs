@@ -14,6 +14,25 @@ fn parse_timestamp(s: &str) -> Result<DateTime<Utc>> {
     Ok(naive.and_utc())
 }
 
+fn row_to_todo_item(row: &turso::Row) -> Result<TodoItem> {
+    let id_str: String = row.get(0)?;
+    let id = Uuid::parse_str(&id_str)?;
+    let label: String = row.get(1)?;
+    let status_str: String = row.get(2)?;
+    let status = TodoStatus::from_str(&status_str)?;
+    let created_str: String = row.get(3)?;
+    let created_at = parse_timestamp(&created_str)?;
+    let updated_str: String = row.get(4)?;
+    let updated_at = parse_timestamp(&updated_str)?;
+    Ok(TodoItem {
+        id,
+        label,
+        status,
+        created_at,
+        updated_at,
+    })
+}
+
 pub async fn insert(tx: &Transaction<'_>, label: &str) -> Result<TodoItem> {
     let sql = r#"INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?)
@@ -35,23 +54,7 @@ pub async fn insert(tx: &Transaction<'_>, label: &str) -> Result<TodoItem> {
     let row = rows.next().await?;
     drop(rows);
     if let Some(row) = row {
-        let id_str: String = row.get(0)?;
-        let id = Uuid::parse_str(&id_str)?;
-        let label: String = row.get(1)?;
-        let status_str: String = row.get(2)?;
-        let status = TodoStatus::from_str(&status_str)?;
-        let created_str: String = row.get(3)?;
-        let created_at = parse_timestamp(&created_str)?;
-        let updated_str: String = row.get(4)?;
-        let updated_at = parse_timestamp(&updated_str)?;
-
-        return Ok(TodoItem {
-            id,
-            label,
-            status,
-            created_at,
-            updated_at,
-        });
+        return row_to_todo_item(&row);
     }
     Err(QueryReturnedNoRows.into())
 }
@@ -62,23 +65,7 @@ pub async fn list_active(conn: &Connection) -> Result<Vec<TodoItem>> {
 
     let mut items = Vec::new();
     while let Some(row) = rows.next().await? {
-        let id_str: String = row.get(0)?;
-        let id = Uuid::parse_str(&id_str)?;
-        let label: String = row.get(1)?;
-        let status_str: String = row.get(2)?;
-        let status = TodoStatus::from_str(&status_str)?;
-        let created_str: String = row.get(3)?;
-        let created_at = parse_timestamp(&created_str)?;
-        let updated_str: String = row.get(4)?;
-        let updated_at = parse_timestamp(&updated_str)?;
-
-        items.push(TodoItem {
-            id,
-            label,
-            status,
-            created_at,
-            updated_at,
-        });
+        items.push(row_to_todo_item(&row)?);
     }
 
     Ok(items)
@@ -90,23 +77,7 @@ pub async fn list_all(conn: &Connection) -> Result<Vec<TodoItem>> {
 
     let mut items = Vec::new();
     while let Some(row) = rows.next().await? {
-        let id_str: String = row.get(0)?;
-        let id = Uuid::parse_str(&id_str)?;
-        let label: String = row.get(1)?;
-        let status_str: String = row.get(2)?;
-        let status = TodoStatus::from_str(&status_str)?;
-        let created_str: String = row.get(3)?;
-        let created_at = parse_timestamp(&created_str)?;
-        let updated_str: String = row.get(4)?;
-        let updated_at = parse_timestamp(&updated_str)?;
-
-        items.push(TodoItem {
-            id,
-            label,
-            status,
-            created_at,
-            updated_at,
-        });
+        items.push(row_to_todo_item(&row)?);
     }
 
     Ok(items)
@@ -124,25 +95,9 @@ pub async fn update_status(
         .query(sql, (new_status.to_string(), now.clone(), id.to_string()))
         .await?;
     let row = rows.next().await?;
-    while (rows.next().await?).is_some() {}
+    while rows.next().await.is_ok_and(|r| r.is_some()) {}
     if let Some(row) = row {
-        let id_str: String = row.get(0)?;
-        let id = Uuid::parse_str(&id_str)?;
-        let label: String = row.get(1)?;
-        let status_str: String = row.get(2)?;
-        let status = TodoStatus::from_str(&status_str)?;
-        let created_str: String = row.get(3)?;
-        let created_at = parse_timestamp(&created_str)?;
-        let updated_str: String = row.get(4)?;
-        let updated_at = parse_timestamp(&updated_str)?;
-
-        return Ok(TodoItem {
-            id,
-            label,
-            status,
-            created_at,
-            updated_at,
-        });
+        return row_to_todo_item(&row);
     }
     Err(QueryReturnedNoRows.into())
 }
@@ -151,25 +106,9 @@ pub async fn get_by_id(tx: &Transaction<'_>, id: Uuid) -> Result<TodoItem> {
     let sql = "SELECT todo_item_id, label, status, created_at, updated_at FROM todo_item WHERE todo_item_id = ?";
     let mut rows = tx.query(sql, (id.to_string(),)).await?;
     let row = rows.next().await?;
-    while (rows.next().await?).is_some() {}
+    while rows.next().await.is_ok_and(|r| r.is_some()) {}
     if let Some(row) = row {
-        let id_str: String = row.get(0)?;
-        let id = Uuid::parse_str(&id_str)?;
-        let label: String = row.get(1)?;
-        let status_str: String = row.get(2)?;
-        let status = TodoStatus::from_str(&status_str)?;
-        let created_str: String = row.get(3)?;
-        let created_at = parse_timestamp(&created_str)?;
-        let updated_str: String = row.get(4)?;
-        let updated_at = parse_timestamp(&updated_str)?;
-
-        return Ok(TodoItem {
-            id,
-            label,
-            status,
-            created_at,
-            updated_at,
-        });
+        return row_to_todo_item(&row);
     }
     Err(QueryReturnedNoRows.into())
 }
@@ -296,6 +235,52 @@ mod tests {
         assert_eq!(fetched.status, TodoStatus::New);
         assert_eq!(fetched.created_at, inserted.created_at);
         assert_eq!(fetched.updated_at, inserted.updated_at);
+        tx.commit().await.expect("commit failed");
+    }
+
+    #[tokio::test]
+    async fn update_status_done_to_new() {
+        let mut conn = setup().await;
+        let tx = conn.transaction().await.expect("tx begin failed");
+
+        let id = Uuid::now_v7();
+        tx.execute(
+            "INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at) VALUES (?, ?, 'DONE', ?, ?)",
+            (id.to_string(), "test item".to_string(), Utc::now().to_rfc3339(), Utc::now().to_rfc3339()),
+        )
+        .await
+        .expect("insert failed");
+
+        let item = get_by_id(&tx, id).await.expect("get failed");
+        assert_eq!(item.status, TodoStatus::Done);
+
+        let updated = update_status(&tx, id, &TodoStatus::New)
+            .await
+            .expect("update failed");
+        assert_eq!(updated.status, TodoStatus::New);
+        tx.commit().await.expect("commit failed");
+    }
+
+    #[tokio::test]
+    async fn update_status_in_progress_to_new() {
+        let mut conn = setup().await;
+        let tx = conn.transaction().await.expect("tx begin failed");
+
+        let id = Uuid::now_v7();
+        tx.execute(
+            "INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at) VALUES (?, ?, 'IN_PROGRESS', ?, ?)",
+            (id.to_string(), "test item".to_string(), Utc::now().to_rfc3339(), Utc::now().to_rfc3339()),
+        )
+        .await
+        .expect("insert failed");
+
+        let item = get_by_id(&tx, id).await.expect("get failed");
+        assert_eq!(item.status, TodoStatus::InProgress);
+
+        let updated = update_status(&tx, id, &TodoStatus::New)
+            .await
+            .expect("update failed");
+        assert_eq!(updated.status, TodoStatus::New);
         tx.commit().await.expect("commit failed");
     }
 }

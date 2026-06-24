@@ -3,8 +3,8 @@ source: src/tui/app.rs
 expression: terminal.backend()
 ---
 "┌TODO List─────────────────────────────────────────────────────────────────────┐"
-"│Status       Label                                          Created           │"
-"│NEW          buy groceries                                  2024-01-15 05:30  │"
+"│Status       Label                       Created            Updated           │"
+"│NEW          buy groceries               2024-01-15 05:30   2024-01-15 05:30  │"
 "│                                                                              │"
 "│                                                                              │"
 "│                                                                              │"
