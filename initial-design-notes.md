@@ -1,4 +1,6 @@
-## Features
+**Consider this document to be stale**
+
+## Planned Features
 
 - TUI -- runs in the terminal, as all things should
 - TODO list, stored in a Turso DB instance
