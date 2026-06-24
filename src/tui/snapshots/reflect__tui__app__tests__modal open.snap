@@ -1,11 +1,10 @@
 ---
 source: src/tui/app.rs
-assertion_line: 185
 expression: terminal.backend()
 ---
 "┌TODO List─────────────────────────────────────────────────────────────────────┐"
 "│Status       Label                                          Created           │"
-"│NEW          buy groceries                                  2024-01-15 10:30  │"
+"│NEW          buy groceries                                  2024-01-15 05:30  │"
 "│                                                                              │"
 "│                                                                              │"
 "│                                                                              │"

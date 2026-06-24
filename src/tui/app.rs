@@ -177,4 +177,34 @@ mod tests {
             .expect("failed to draw");
         insta::assert_snapshot!("modal open", terminal.backend());
     }
+
+    #[tokio::test]
+    async fn selected_item_render() {
+        let mut app = test_app().await;
+        app.todo_list_view
+            .set_items(vec![fixed_item("buy groceries"), fixed_item("write tests")]);
+        app.todo_list_view.set_selected_index(0);
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("terminal creation");
+        terminal
+            .draw(|frame| render_app(&mut app, frame))
+            .expect("failed to draw");
+        insta::assert_snapshot!("selected item render", terminal.backend());
+    }
+
+    #[tokio::test]
+    async fn status_modal_open_render() {
+        let mut app = test_app().await;
+        app.todo_list_view
+            .set_items(vec![fixed_item("buy groceries"), fixed_item("write tests")]);
+        app.todo_list_view.open_status_modal();
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("terminal creation");
+        terminal
+            .draw(|frame| render_app(&mut app, frame))
+            .expect("failed to draw");
+        insta::assert_snapshot!("status modal open", terminal.backend());
+    }
 }
