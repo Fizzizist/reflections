@@ -1,8 +1,10 @@
 use super::splash;
 use crate::models::todo_item::{TodoItem, TodoStatus};
 use crate::services::todo::TodoService;
+use crate::tui::input_modal::InputModal;
 use anyhow::Result;
 use chrono::Local;
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
     layout::Constraint,
@@ -12,6 +14,7 @@ use ratatui::{
 pub struct TodoListView {
     items: Vec<TodoItem>,
     service: TodoService,
+    input_modal: InputModal,
 }
 
 impl TodoListView {
@@ -19,23 +22,27 @@ impl TodoListView {
         Self {
             items: Vec::new(),
             service,
+            input_modal: InputModal::new(),
         }
     }
 
-    pub async fn load_items(&mut self) -> Result<()> {
-        self.items = self.service.list_todo_items().await?;
-        Ok(())
+    pub async fn init(&mut self) -> Result<()> {
+        self.load_items().await
     }
 
-    pub async fn submit_todo(&mut self, label: &str) -> Result<()> {
-        self.service.create_todo_item(label).await?;
-        self.load_items().await?;
+    pub async fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
+        if self.input_modal.is_active() {
+            if let Some(input) = self.input_modal.handle_key(key) {
+                let trimmed = input.trim();
+                if !trimmed.is_empty() {
+                    self.submit_todo(trimmed).await?;
+                }
+                self.input_modal.close();
+            }
+        } else if let KeyCode::Char('a') = key.code {
+            self.input_modal.open();
+        }
         Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub fn set_items(&mut self, items: Vec<TodoItem>) {
-        self.items = items;
     }
 
     pub fn render(&mut self, frame: &mut Frame) {
@@ -89,5 +96,30 @@ impl TodoListView {
 
             frame.render_widget(table, inner);
         }
+
+        if self.input_modal.is_active() {
+            self.input_modal.render(frame);
+        }
+    }
+
+    async fn load_items(&mut self) -> Result<()> {
+        self.items = self.service.list_todo_items().await?;
+        Ok(())
+    }
+
+    async fn submit_todo(&mut self, label: &str) -> Result<()> {
+        self.service.create_todo_item(label).await?;
+        self.load_items().await?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn set_items(&mut self, items: Vec<TodoItem>) {
+        self.items = items;
+    }
+
+    #[cfg(test)]
+    pub fn open_modal(&mut self) {
+        self.input_modal.open();
     }
 }

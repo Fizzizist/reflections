@@ -1,5 +1,4 @@
 use crate::services::todo::TodoService;
-use crate::tui::input_modal::InputModal;
 
 use super::todo_list::TodoListView;
 use anyhow::Result;
@@ -19,31 +18,33 @@ use ratatui::prelude::CrosstermBackend;
 
 pub struct App {
     todo_list_view: TodoListView,
-    input_modal: InputModal,
 }
 
 impl App {
     pub fn new(todo_service: TodoService) -> Self {
         Self {
             todo_list_view: TodoListView::new(todo_service),
-            input_modal: InputModal::new(),
         }
     }
 
-    pub async fn load_items(&mut self) -> Result<()> {
-        self.todo_list_view.load_items().await
-    }
-
-    pub async fn submit_todo(&mut self, label: &str) -> Result<()> {
-        self.todo_list_view.submit_todo(label).await
+    pub async fn init(&mut self) -> Result<()> {
+        self.todo_list_view.init().await
     }
 }
 
 pub fn render_app(app: &mut App, frame: &mut ratatui::Frame) {
     app.todo_list_view.render(frame);
-    if app.input_modal.is_active() {
-        app.input_modal.render(frame);
-    }
+}
+
+fn is_global_quit(key: &KeyEvent) -> bool {
+    matches!(
+        key,
+        KeyEvent {
+            code: KeyCode::Char('c'),
+            modifiers: KeyModifiers::CONTROL,
+            ..
+        }
+    )
 }
 
 async fn run_app(
@@ -51,7 +52,7 @@ async fn run_app(
     todo_service: TodoService,
 ) -> Result<()> {
     let mut app = App::new(todo_service);
-    app.load_items().await?;
+    app.init().await?;
     terminal.draw(|frame| render_app(&mut app, frame))?;
 
     let mut terminal_events = EventStream::new();
@@ -61,24 +62,11 @@ async fn run_app(
                 match event {
                     Some(Ok(terminal_event)) => {
                         if let Event::Key(key) = terminal_event {
-                            if app.input_modal.is_active() {
-                                if let Some(input) = app.input_modal.handle_key(key) {
-                                    let trimmed = input.trim();
-                                    if !trimmed.is_empty() {
-                                        app.submit_todo(trimmed).await?;
-                                    }
-                                    app.input_modal.close();
-                                }
-                                terminal.draw(|frame| render_app(&mut app, frame))?;
-                            } else {
-                                if let KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::CONTROL, .. } = key {
-                                    break;
-                                }
-                                if let KeyCode::Char('a') = key.code {
-                                    app.input_modal.open();
-                                    terminal.draw(|frame| render_app(&mut app, frame))?;
-                                }
+                            if is_global_quit(&key) {
+                                break;
                             }
+                            app.todo_list_view.handle_key(key).await?;
+                            terminal.draw(|frame| render_app(&mut app, frame))?;
                         }
                     }
                     Some(Err(e)) => {
@@ -152,7 +140,7 @@ mod tests {
     #[tokio::test]
     async fn empty_app_render() {
         let mut app = test_app().await;
-        app.load_items().await.expect("load failed");
+        app.init().await.expect("init failed");
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).expect("terminal creation");
         terminal
@@ -180,7 +168,7 @@ mod tests {
         let mut app = test_app().await;
         app.todo_list_view
             .set_items(vec![fixed_item("buy groceries")]);
-        app.input_modal.open();
+        app.todo_list_view.open_modal();
 
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).expect("terminal creation");
