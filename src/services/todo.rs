@@ -1,8 +1,9 @@
 use anyhow::Result;
 use turso::Connection;
+use uuid::Uuid;
 
 use crate::models::event::EventType;
-use crate::models::todo_item::TodoItem;
+use crate::models::todo_item::{TodoItem, TodoStatus};
 use crate::repositories;
 
 pub struct TodoService {
@@ -25,6 +26,28 @@ impl TodoService {
 
     pub async fn list_todo_items(&self) -> Result<Vec<TodoItem>> {
         repositories::todo_item::list_active(&self.conn).await
+    }
+
+    pub async fn update_todo_status(
+        &mut self,
+        id: Uuid,
+        new_status: TodoStatus,
+    ) -> Result<TodoItem> {
+        let tx = self.conn.transaction().await?;
+        let old_item = repositories::todo_item::get_by_id(&tx, id).await?;
+        let updated_item = repositories::todo_item::update_status(&tx, id, &new_status).await?;
+        let metadata = serde_json::json!({
+            "old_status": old_item.status.to_string(),
+            "new_status": new_status.to_string()
+        })
+        .to_string();
+        repositories::event::insert(&tx, id, &EventType::TodoItemStatusChanged, &metadata).await?;
+        tx.commit().await?;
+        Ok(updated_item)
+    }
+
+    pub async fn list_all_todo_items(&self) -> Result<Vec<TodoItem>> {
+        repositories::todo_item::list_all(&self.conn).await
     }
 }
 
@@ -224,5 +247,108 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].label.len(), 250);
         assert_eq!(items[0].label, label);
+    }
+
+    #[tokio::test]
+    async fn update_todo_status_changes_status() {
+        let mut svc = setup().await;
+        let item = svc
+            .create_todo_item("test item")
+            .await
+            .expect("create failed");
+        assert_eq!(item.status, TodoStatus::New);
+
+        let updated = svc
+            .update_todo_status(item.id, TodoStatus::InProgress)
+            .await
+            .expect("update failed");
+        assert_eq!(updated.status, TodoStatus::InProgress);
+    }
+
+    #[tokio::test]
+    async fn update_todo_status_creates_event_with_metadata() {
+        let mut svc = setup().await;
+        let item = svc
+            .create_todo_item("test item")
+            .await
+            .expect("create failed");
+
+        svc.update_todo_status(item.id, TodoStatus::InProgress)
+            .await
+            .expect("update failed");
+
+        let mut rows = svc
+            .conn
+            .query(
+                "SELECT event_type, metadata FROM event WHERE entity_id = ? AND event_type = 'TODO_ITEM_STATUS_CHANGED'",
+                [item.id.to_string()],
+            )
+            .await
+            .expect("query failed");
+
+        let row = rows
+            .next()
+            .await
+            .expect("row fetch failed")
+            .expect("status change event not found");
+
+        let event_type_str = row
+            .get_value(0)
+            .expect("value extraction failed")
+            .as_text()
+            .expect("expected text")
+            .to_string();
+        assert_eq!(event_type_str, "TODO_ITEM_STATUS_CHANGED");
+
+        let metadata_str = row
+            .get_value(1)
+            .expect("value extraction failed")
+            .as_text()
+            .expect("expected text")
+            .to_string();
+        let metadata: serde_json::Value =
+            serde_json::from_str(&metadata_str).expect("invalid json");
+        assert_eq!(metadata["old_status"], "NEW");
+        assert_eq!(metadata["new_status"], "IN_PROGRESS");
+    }
+
+    #[tokio::test]
+    async fn update_todo_status_updates_updated_at() {
+        let mut svc = setup().await;
+        let item = svc
+            .create_todo_item("test item")
+            .await
+            .expect("create failed");
+        let original_updated = item.updated_at;
+
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        let updated = svc
+            .update_todo_status(item.id, TodoStatus::InProgress)
+            .await
+            .expect("update failed");
+        assert!(updated.updated_at > original_updated);
+    }
+
+    #[tokio::test]
+    async fn update_todo_status_reverse_transition() {
+        let mut svc = setup().await;
+        let item = svc
+            .create_todo_item("test item")
+            .await
+            .expect("create failed");
+        assert_eq!(item.status, TodoStatus::New);
+
+        let done = svc
+            .update_todo_status(item.id, TodoStatus::Done)
+            .await
+            .expect("update to Done failed");
+        assert_eq!(done.status, TodoStatus::Done);
+
+        let back_to_new = svc
+            .update_todo_status(item.id, TodoStatus::New)
+            .await
+            .expect("update to New failed");
+        assert_eq!(back_to_new.status, TodoStatus::New);
     }
 }

@@ -39,6 +39,5 @@ pub struct TodoItem {
     pub label: String,
     pub status: TodoStatus,
     pub created_at: DateTime<Utc>,
-    #[allow(dead_code)]
     pub updated_at: DateTime<Utc>,
 }

@@ -6,12 +6,14 @@ use uuid::Uuid;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EventType {
     TodoItemCreated,
+    TodoItemStatusChanged,
 }
 
 impl fmt::Display for EventType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             EventType::TodoItemCreated => write!(f, "TODO_ITEM_CREATED"),
+            EventType::TodoItemStatusChanged => write!(f, "TODO_ITEM_STATUS_CHANGED"),
         }
     }
 }
@@ -22,6 +24,7 @@ impl FromStr for EventType {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "TODO_ITEM_CREATED" => Ok(EventType::TodoItemCreated),
+            "TODO_ITEM_STATUS_CHANGED" => Ok(EventType::TodoItemStatusChanged),
             other => Err(anyhow::anyhow!("invalid EventType: {other}")),
         }
     }
