@@ -1,5 +1,6 @@
 mod app;
 mod input_modal;
+mod meetings_view;
 mod reflections_view;
 mod splash;
 mod status_modal;
