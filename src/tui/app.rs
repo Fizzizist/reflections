@@ -1,5 +1,6 @@
 use crate::services::todo::TodoService;
 
+use super::reflections_view::ReflectionsView;
 use super::todo_list::TodoListView;
 use anyhow::Result;
 use futures::stream::StreamExt;
@@ -16,24 +17,101 @@ use ratatui::crossterm::terminal::{
 };
 use ratatui::prelude::CrosstermBackend;
 
+#[derive(Clone, Copy)]
+enum Tab {
+    TodoList,
+    Reflections,
+}
+
 pub struct App {
     todo_list_view: TodoListView,
+    reflections_view: ReflectionsView,
+    active_tab: Tab,
+    pending_g_prefix: bool,
 }
 
 impl App {
     pub fn new(todo_service: TodoService) -> Self {
         Self {
             todo_list_view: TodoListView::new(todo_service),
+            reflections_view: ReflectionsView::new(),
+            active_tab: Tab::TodoList,
+            pending_g_prefix: false,
         }
     }
 
     pub async fn init(&mut self) -> Result<()> {
         self.todo_list_view.init().await
     }
+
+    pub async fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
+        if self.pending_g_prefix {
+            match key.code {
+                KeyCode::Char('t') => {
+                    self.active_tab = self.next_tab();
+                    self.pending_g_prefix = false;
+                    return Ok(());
+                }
+                KeyCode::Char('T') => {
+                    self.active_tab = self.prev_tab();
+                    self.pending_g_prefix = false;
+                    return Ok(());
+                }
+                _ => {
+                    self.pending_g_prefix = false;
+                }
+            }
+        }
+
+        if key.code == KeyCode::Char('g') && !self.is_modal_active() {
+            self.pending_g_prefix = true;
+            return Ok(());
+        }
+
+        match self.active_tab {
+            Tab::TodoList => self.todo_list_view.handle_key(key).await?,
+            Tab::Reflections => {}
+        }
+        Ok(())
+    }
+
+    fn next_tab(&self) -> Tab {
+        let tabs = [Tab::TodoList, Tab::Reflections];
+        let current = self.active_tab as usize;
+        tabs[(current + 1) % tabs.len()]
+    }
+
+    fn prev_tab(&self) -> Tab {
+        let tabs = [Tab::TodoList, Tab::Reflections];
+        let current = self.active_tab as usize;
+        tabs[(current + tabs.len() - 1) % tabs.len()]
+    }
+
+    fn is_modal_active(&self) -> bool {
+        match self.active_tab {
+            Tab::TodoList => self.todo_list_view.is_modal_active(),
+            Tab::Reflections => false,
+        }
+    }
 }
 
 pub fn render_app(app: &mut App, frame: &mut ratatui::Frame) {
-    app.todo_list_view.render(frame);
+    use ratatui::layout::{Constraint, Layout};
+    use ratatui::widgets::Tabs;
+
+    let chunks = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(frame.area());
+
+    let tab_titles = vec!["Todo List", "Reflections"];
+    let tabs = Tabs::new(tab_titles)
+        .select(app.active_tab as usize)
+        .highlight_style(ratatui::style::Style::default().reversed());
+    frame.render_widget(tabs, chunks[0]);
+
+    let view_area = chunks[1];
+    match app.active_tab {
+        Tab::TodoList => app.todo_list_view.render(frame, view_area),
+        Tab::Reflections => app.reflections_view.render(frame, view_area),
+    }
 }
 
 fn is_global_quit(key: &KeyEvent) -> bool {
@@ -65,7 +143,7 @@ async fn run_app(
                             if is_global_quit(&key) {
                                 break;
                             }
-                            app.todo_list_view.handle_key(key).await?;
+                            app.handle_key(key).await?;
                             terminal.draw(|frame| render_app(&mut app, frame))?;
                         }
                     }
@@ -215,10 +293,7 @@ mod tests {
             .set_items(vec![fixed_item("task 1"), fixed_item("task 2")]);
 
         let key_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
-        app.todo_list_view
-            .handle_key(key_j)
-            .await
-            .expect("handle_key failed");
+        app.handle_key(key_j).await.expect("handle_key failed");
 
         assert_eq!(app.todo_list_view.selected_index(), Some(0));
     }
@@ -230,14 +305,8 @@ mod tests {
             .set_items(vec![fixed_item("task 1"), fixed_item("task 2")]);
 
         let key_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
-        app.todo_list_view
-            .handle_key(key_j)
-            .await
-            .expect("handle_key failed");
-        app.todo_list_view
-            .handle_key(key_j)
-            .await
-            .expect("handle_key failed");
+        app.handle_key(key_j).await.expect("handle_key failed");
+        app.handle_key(key_j).await.expect("handle_key failed");
 
         assert_eq!(app.todo_list_view.selected_index(), Some(1));
     }
@@ -250,14 +319,8 @@ mod tests {
 
         let key_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
         let key_k = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE);
-        app.todo_list_view
-            .handle_key(key_j)
-            .await
-            .expect("handle_key failed");
-        app.todo_list_view
-            .handle_key(key_k)
-            .await
-            .expect("handle_key failed");
+        app.handle_key(key_j).await.expect("handle_key failed");
+        app.handle_key(key_k).await.expect("handle_key failed");
 
         assert_eq!(app.todo_list_view.selected_index(), Some(0));
     }
@@ -269,14 +332,8 @@ mod tests {
 
         let key_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
         let key_u = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::NONE);
-        app.todo_list_view
-            .handle_key(key_j)
-            .await
-            .expect("handle_key failed");
-        app.todo_list_view
-            .handle_key(key_u)
-            .await
-            .expect("handle_key failed");
+        app.handle_key(key_j).await.expect("handle_key failed");
+        app.handle_key(key_u).await.expect("handle_key failed");
 
         assert!(app.todo_list_view.is_status_modal_active());
     }
@@ -287,10 +344,7 @@ mod tests {
         app.todo_list_view.set_items(vec![fixed_item("task 1")]);
 
         let key_a = KeyEvent::new(KeyCode::Char('A'), KeyModifiers::NONE);
-        app.todo_list_view
-            .handle_key(key_a)
-            .await
-            .expect("handle_key failed");
+        app.handle_key(key_a).await.expect("handle_key failed");
 
         assert!(app.todo_list_view.is_show_all());
     }
@@ -301,10 +355,7 @@ mod tests {
         app.init().await.expect("init failed");
 
         let key_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
-        app.todo_list_view
-            .handle_key(key_j)
-            .await
-            .expect("handle_key failed");
+        app.handle_key(key_j).await.expect("handle_key failed");
 
         assert_eq!(app.todo_list_view.selected_index(), None);
     }
@@ -315,10 +366,7 @@ mod tests {
         app.init().await.expect("init failed");
 
         let key_k = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE);
-        app.todo_list_view
-            .handle_key(key_k)
-            .await
-            .expect("handle_key failed");
+        app.handle_key(key_k).await.expect("handle_key failed");
 
         assert_eq!(app.todo_list_view.selected_index(), None);
     }
@@ -329,10 +377,7 @@ mod tests {
         app.init().await.expect("init failed");
 
         let key_u = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::NONE);
-        app.todo_list_view
-            .handle_key(key_u)
-            .await
-            .expect("handle_key failed");
+        app.handle_key(key_u).await.expect("handle_key failed");
 
         assert!(!app.todo_list_view.is_status_modal_active());
     }
@@ -351,5 +396,106 @@ mod tests {
         app.todo_list_view.clamp_selected_index_for_test();
 
         assert_eq!(app.todo_list_view.selected_index(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn reflections_view_render() {
+        let mut app = test_app().await;
+        app.active_tab = Tab::Reflections;
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("terminal creation");
+        terminal
+            .draw(|frame| render_app(&mut app, frame))
+            .expect("failed to draw");
+        insta::assert_snapshot!("reflections view", terminal.backend());
+    }
+
+    #[tokio::test]
+    async fn tab_bar_render() {
+        let mut app = test_app().await;
+        app.init().await.expect("init failed");
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("terminal creation");
+        terminal
+            .draw(|frame| render_app(&mut app, frame))
+            .expect("failed to draw");
+        insta::assert_snapshot!("tab bar render", terminal.backend());
+    }
+
+    #[tokio::test]
+    async fn gt_switches_right() {
+        let mut app = test_app().await;
+        let key_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
+        let key_t = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE);
+        app.handle_key(key_g).await.expect("handle_key failed");
+        app.handle_key(key_t).await.expect("handle_key failed");
+        assert!(matches!(app.active_tab, Tab::Reflections));
+    }
+
+    #[tokio::test]
+    async fn gt_capital_switches_left() {
+        let mut app = test_app().await;
+        app.active_tab = Tab::Reflections;
+        let key_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
+        let key_big_t = KeyEvent::new(KeyCode::Char('T'), KeyModifiers::NONE);
+        app.handle_key(key_g).await.expect("handle_key failed");
+        app.handle_key(key_big_t).await.expect("handle_key failed");
+        assert!(matches!(app.active_tab, Tab::TodoList));
+    }
+
+    #[tokio::test]
+    async fn gt_wraps_from_reflections_to_todo() {
+        let mut app = test_app().await;
+        app.active_tab = Tab::Reflections;
+        let key_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
+        let key_t = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE);
+        app.handle_key(key_g).await.expect("handle_key failed");
+        app.handle_key(key_t).await.expect("handle_key failed");
+        assert!(matches!(app.active_tab, Tab::TodoList));
+    }
+
+    #[tokio::test]
+    async fn g_prefix_resets_on_unrelated_key() {
+        let mut app = test_app().await;
+        app.todo_list_view.set_items(vec![fixed_item("task 1")]);
+        let key_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
+        let key_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
+        app.handle_key(key_g).await.expect("handle_key failed");
+        app.handle_key(key_j).await.expect("handle_key failed");
+        assert!(matches!(app.active_tab, Tab::TodoList));
+        assert!(!app.pending_g_prefix);
+        assert_eq!(app.todo_list_view.selected_index(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn modal_blocks_tab_switch() {
+        let mut app = test_app().await;
+        app.todo_list_view.set_items(vec![fixed_item("task 1")]);
+        app.todo_list_view.open_modal();
+        let key_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
+        let key_t = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE);
+        app.handle_key(key_g).await.expect("handle_key failed");
+        app.handle_key(key_t).await.expect("handle_key failed");
+        assert!(matches!(app.active_tab, Tab::TodoList));
+        assert!(app.todo_list_view.is_modal_active());
+    }
+
+    #[tokio::test]
+    async fn todo_list_state_persists_across_tab_switch() {
+        let mut app = test_app().await;
+        app.todo_list_view
+            .set_items(vec![fixed_item("task 1"), fixed_item("task 2")]);
+        app.todo_list_view.set_selected_index(1);
+
+        let key_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
+        let key_t = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE);
+        app.handle_key(key_g).await.expect("handle_key failed");
+        app.handle_key(key_t).await.expect("handle_key failed");
+        assert!(matches!(app.active_tab, Tab::Reflections));
+
+        app.handle_key(key_g).await.expect("handle_key failed");
+        app.handle_key(key_t).await.expect("handle_key failed");
+        assert!(matches!(app.active_tab, Tab::TodoList));
+        assert_eq!(app.todo_list_view.selected_index(), Some(1));
     }
 }

@@ -73,12 +73,10 @@ impl StatusModal {
         }
     }
 
-    pub fn render(&self, frame: &mut Frame) {
+    pub fn render(&self, frame: &mut Frame, area: Rect) {
         if !self.active {
             return;
         }
-
-        let area = frame.area();
         let width = 30u16;
         let height = 7u16;
         let x = area.x + (area.width.saturating_sub(width)) / 2;

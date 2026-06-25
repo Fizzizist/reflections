@@ -3,7 +3,7 @@ source: src/tui/app.rs
 expression: terminal.backend()
 ---
 " Todo List │ Reflections                                                        "
-"┌TODO List─────────────────────────────────────────────────────────────────────┐"
+"┌Reflections───────────────────────────────────────────────────────────────────┐"
 "│                                                                              │"
 "│                                                                              │"
 "│                                                                              │"
