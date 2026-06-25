@@ -1,5 +1,6 @@
 ---
 source: src/tui/app.rs
+assertion_line: 149
 expression: terminal.backend()
 ---
 "┌TODO List─────────────────────────────────────────────────────────────────────┐"
@@ -15,7 +16,7 @@ expression: terminal.backend()
 "│                    █ █ █    █  █ █   █   █  █ █ █ █ █  █                     │"
 "│                    █ █  ██  █  █  ██  █  █  █  █  █ █ █                      │"
 "│                                                                              │"
-"│                    v0.2.0 — by Peter Vlasveld                                │"
+"│                    v0.3.0 — by Peter Vlasveld                                │"
 "│                                                                              │"
 "│                                                                              │"
 "│                                                                              │"
