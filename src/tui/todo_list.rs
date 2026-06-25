@@ -8,7 +8,7 @@ use chrono::Local;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
-    layout::Constraint,
+    layout::{Constraint, Rect},
     style::Style,
     widgets::{Block, Borders, Cell, Row, Table},
 };
@@ -110,11 +110,11 @@ impl TodoListView {
         Ok(())
     }
 
-    pub fn render(&mut self, frame: &mut Frame) {
+    pub fn render(&mut self, frame: &mut Frame, area: Rect) {
         let block = Block::default().borders(Borders::ALL).title("TODO List");
-        let inner = block.inner(frame.area());
+        let inner = block.inner(area);
 
-        frame.render_widget(block, frame.area());
+        frame.render_widget(block, area);
 
         if inner.width == 0 || inner.height == 0 {
             return;
@@ -173,11 +173,11 @@ impl TodoListView {
         }
 
         if self.input_modal.is_active() {
-            self.input_modal.render(frame);
+            self.input_modal.render(frame, area);
         }
 
         if self.status_modal.is_active() {
-            self.status_modal.render(frame);
+            self.status_modal.render(frame, area);
         }
     }
 
@@ -194,6 +194,10 @@ impl TodoListView {
         self.service.create_todo_item(label).await?;
         self.load_items().await?;
         Ok(())
+    }
+
+    pub fn is_modal_active(&self) -> bool {
+        self.input_modal.is_active() || self.status_modal.is_active()
     }
 }
 
