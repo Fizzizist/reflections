@@ -13,7 +13,7 @@ impl ReflectionsView {
         ReflectionsView
     }
 
-    pub fn render(&mut self, frame: &mut Frame, area: Rect) {
+    pub fn render(&self, frame: &mut Frame, area: Rect) {
         let block = Block::default().title("Reflections").borders(Borders::ALL);
         let inner = block.inner(area);
         frame.render_widget(block, area);

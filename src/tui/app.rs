@@ -76,17 +76,15 @@ impl App {
     }
 
     fn next_tab(&self) -> Tab {
-        match self.active_tab {
-            Tab::TodoList => Tab::Reflections,
-            Tab::Reflections => Tab::TodoList,
-        }
+        let tabs = [Tab::TodoList, Tab::Reflections];
+        let current = self.active_tab as usize;
+        tabs[(current + 1) % tabs.len()]
     }
 
     fn prev_tab(&self) -> Tab {
-        match self.active_tab {
-            Tab::TodoList => Tab::Reflections,
-            Tab::Reflections => Tab::TodoList,
-        }
+        let tabs = [Tab::TodoList, Tab::Reflections];
+        let current = self.active_tab as usize;
+        tabs[(current + tabs.len() - 1) % tabs.len()]
     }
 
     fn is_modal_active(&self) -> bool {
@@ -104,7 +102,9 @@ pub fn render_app(app: &mut App, frame: &mut ratatui::Frame) {
     let chunks = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(frame.area());
 
     let tab_titles = vec!["Todo List", "Reflections"];
-    let tabs = Tabs::new(tab_titles).select(app.active_tab as usize);
+    let tabs = Tabs::new(tab_titles)
+        .select(app.active_tab as usize)
+        .highlight_style(ratatui::style::Style::default().reversed());
     frame.render_widget(tabs, chunks[0]);
 
     let view_area = chunks[1];
@@ -478,5 +478,24 @@ mod tests {
         app.handle_key(key_t).await.expect("handle_key failed");
         assert!(matches!(app.active_tab, Tab::TodoList));
         assert!(app.todo_list_view.is_modal_active());
+    }
+
+    #[tokio::test]
+    async fn todo_list_state_persists_across_tab_switch() {
+        let mut app = test_app().await;
+        app.todo_list_view
+            .set_items(vec![fixed_item("task 1"), fixed_item("task 2")]);
+        app.todo_list_view.set_selected_index(1);
+
+        let key_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
+        let key_t = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE);
+        app.handle_key(key_g).await.expect("handle_key failed");
+        app.handle_key(key_t).await.expect("handle_key failed");
+        assert!(matches!(app.active_tab, Tab::Reflections));
+
+        app.handle_key(key_g).await.expect("handle_key failed");
+        app.handle_key(key_t).await.expect("handle_key failed");
+        assert!(matches!(app.active_tab, Tab::TodoList));
+        assert_eq!(app.todo_list_view.selected_index(), Some(1));
     }
 }
