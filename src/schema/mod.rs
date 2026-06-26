@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS reflection (
 CREATE TABLE IF NOT EXISTS meeting (
     meeting_id uuid PRIMARY KEY,
     name text NOT NULL,
+    scheduled_at timestamp NOT NULL DEFAULT '1970-01-01T00:00:00Z',
     created_at timestamp NOT NULL,
     updated_at timestamp NOT NULL
 ) STRICT;
@@ -60,8 +61,25 @@ CREATE TABLE IF NOT EXISTS summary (
 ) STRICT;
 ";
 
+const MIGRATIONS: &[&str] = &[
+    "ALTER TABLE meeting ADD COLUMN scheduled_at timestamp NOT NULL DEFAULT '1970-01-01T00:00:00Z'",
+];
+
 pub async fn init_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(SCHEMA_SQL).await?;
+    Ok(())
+}
+
+pub async fn run_migrations(conn: &Connection) -> Result<()> {
+    for migration in MIGRATIONS {
+        if let Err(e) = conn.execute_batch(migration).await {
+            let err_msg = e.to_string().to_lowercase();
+            if err_msg.contains("duplicate column name") {
+                continue;
+            }
+            return Err(e.into());
+        }
+    }
     Ok(())
 }
 
@@ -117,5 +135,61 @@ mod tests {
                 .to_string();
             assert_eq!(name, *table);
         }
+    }
+
+    #[tokio::test]
+    async fn migration_adds_scheduled_at_column() {
+        let conn = test_conn().await;
+
+        let old_schema = "
+CREATE TABLE IF NOT EXISTS meeting (
+    meeting_id uuid PRIMARY KEY,
+    name text NOT NULL,
+    created_at timestamp NOT NULL,
+    updated_at timestamp NOT NULL
+) STRICT;
+";
+        conn.execute_batch(old_schema)
+            .await
+            .expect("failed to create old schema");
+
+        run_migrations(&conn).await.expect("migration failed");
+
+        let mut rows = conn
+            .query("PRAGMA table_info(meeting)", ())
+            .await
+            .expect("query failed");
+
+        let mut found_scheduled_at = false;
+        while let Some(row) = rows.next().await.expect("row fetch failed") {
+            let name: String = row
+                .get_value(1)
+                .expect("value extraction failed")
+                .as_text()
+                .expect("expected text value")
+                .to_string();
+            if name == "scheduled_at" {
+                found_scheduled_at = true;
+                break;
+            }
+        }
+
+        assert!(
+            found_scheduled_at,
+            "scheduled_at column not found after migration"
+        );
+    }
+
+    #[tokio::test]
+    async fn migrations_idempotent() {
+        let conn = test_conn().await;
+        init_schema(&conn).await.expect("schema init failed");
+
+        run_migrations(&conn)
+            .await
+            .expect("first migration run failed");
+        run_migrations(&conn)
+            .await
+            .expect("second migration run failed");
     }
 }
