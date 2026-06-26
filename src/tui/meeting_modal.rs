@@ -1,10 +1,11 @@
+use super::input_box::InputBox;
 use chrono::{DateTime, Datelike, Local, TimeZone, Timelike, Utc};
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
     layout::Rect,
     style::{Modifier, Style},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Block, Borders, Clear},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -18,8 +19,7 @@ const DATETIME_SECTIONS: [&str; 5] = ["Year", "Month", "Day", "Hour", "Minute"];
 pub struct MeetingModal {
     active: bool,
     field_focus: FieldFocus,
-    name_buffer: String,
-    name_cursor: usize,
+    name_input: InputBox,
     year: i32,
     month: u32,
     day: u32,
@@ -34,8 +34,7 @@ impl MeetingModal {
         Self {
             active: false,
             field_focus: FieldFocus::Name,
-            name_buffer: String::new(),
-            name_cursor: 0,
+            name_input: InputBox::new(),
             year: 0,
             month: 1,
             day: 1,
@@ -53,8 +52,7 @@ impl MeetingModal {
     pub fn open(&mut self) {
         self.active = true;
         self.field_focus = FieldFocus::Name;
-        self.name_buffer.clear();
-        self.name_cursor = 0;
+        self.name_input.clear();
         self.dt_section = 0;
         self.dt_typing = None;
 
@@ -93,34 +91,8 @@ impl MeetingModal {
                 self.close();
                 None
             }
-            KeyCode::Char(c) => {
-                if !c.is_control() && self.name_buffer.len() < 200 {
-                    self.name_buffer.insert(self.name_cursor, c);
-                    self.name_cursor += 1;
-                }
-                None
-            }
-            KeyCode::Backspace => {
-                if self.name_cursor > 0 {
-                    self.name_cursor -= 1;
-                    self.name_buffer.remove(self.name_cursor);
-                }
-                None
-            }
-            KeyCode::Left => {
-                if self.name_cursor > 0 {
-                    self.name_cursor -= 1;
-                }
-                None
-            }
-            KeyCode::Right => {
-                if self.name_cursor < self.name_buffer.len() {
-                    self.name_cursor += 1;
-                }
-                None
-            }
             KeyCode::Enter => {
-                let trimmed = self.name_buffer.trim().to_string();
+                let trimmed = self.name_input.value().trim().to_string();
                 if trimmed.is_empty() {
                     self.close();
                     None
@@ -134,7 +106,10 @@ impl MeetingModal {
                 self.close();
                 None
             }
-            _ => None,
+            _ => {
+                self.name_input.handle_key(key);
+                None
+            }
         }
     }
 
@@ -197,7 +172,7 @@ impl MeetingModal {
             }
             KeyCode::Enter => {
                 self.commit_dt_typing();
-                let trimmed = self.name_buffer.trim().to_string();
+                let trimmed = self.name_input.value().trim().to_string();
                 if trimmed.is_empty() {
                     self.close();
                     None
@@ -389,21 +364,9 @@ impl MeetingModal {
             Style::default()
         };
 
-        let name_display = if self.field_focus == FieldFocus::Name {
-            if self.name_cursor >= self.name_buffer.len() {
-                format!("{}█", self.name_buffer)
-            } else {
-                let (before, after) = self.name_buffer.split_at(self.name_cursor);
-                format!("{}█{}", before, after)
-            }
-        } else {
-            self.name_buffer.clone()
-        };
-
-        let name_line = ratatui::text::Line::from(vec![
-            ratatui::text::Span::raw("Name: "),
-            ratatui::text::Span::styled(name_display, name_style),
-        ]);
+        let name_area = Rect::new(inner.x + 1, inner.y + 1, inner.width.saturating_sub(2), 1);
+        self.name_input
+            .render_labeled(frame, name_area, "Name: ", name_style);
 
         let datetime_line = if self.field_focus == FieldFocus::Datetime {
             self.render_datetime_spans()
@@ -414,14 +377,11 @@ impl MeetingModal {
             ])
         };
 
-        let name_paragraph = Paragraph::new(name_line);
-        let datetime_paragraph = Paragraph::new(datetime_line);
-
-        let name_area = Rect::new(inner.x + 1, inner.y + 1, inner.width.saturating_sub(2), 1);
         let datetime_area = Rect::new(inner.x + 1, inner.y + 3, inner.width.saturating_sub(2), 1);
-
-        frame.render_widget(name_paragraph, name_area);
-        frame.render_widget(datetime_paragraph, datetime_area);
+        frame.render_widget(
+            ratatui::widgets::Paragraph::new(datetime_line),
+            datetime_area,
+        );
     }
 
     fn render_datetime_parts(&self) -> String {
@@ -684,11 +644,11 @@ mod tests {
         modal.handle_key(key_char('l'));
         modal.handle_key(key_char('o'));
 
-        assert_eq!(modal.name_buffer, "Hello");
-        assert_eq!(modal.name_cursor, 5);
+        assert_eq!(modal.name_input.value(), "Hello");
+        assert_eq!(modal.name_input.cursor_pos(), 5);
 
         modal.handle_key(key_backspace());
-        assert_eq!(modal.name_buffer, "Hell");
+        assert_eq!(modal.name_input.value(), "Hell");
     }
 
     #[test]
@@ -852,7 +812,7 @@ mod tests {
             modal.handle_key(key_char('a'));
         }
 
-        assert_eq!(modal.name_buffer.len(), 200);
+        assert_eq!(modal.name_input.value().len(), 200);
     }
 
     #[test]
@@ -866,6 +826,6 @@ mod tests {
         modal.handle_key(key_char('\t'));
         modal.handle_key(key_char('b'));
 
-        assert_eq!(modal.name_buffer, "ab");
+        assert_eq!(modal.name_input.value(), "ab");
     }
 }
