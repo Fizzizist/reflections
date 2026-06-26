@@ -24,6 +24,7 @@ impl InputBox {
         }
     }
 
+    #[cfg(test)]
     pub fn with_max_length(max_length: usize) -> Self {
         Self {
             buffer: String::new(),
@@ -41,6 +42,7 @@ impl InputBox {
         &self.buffer
     }
 
+    #[cfg(test)]
     pub fn cursor_pos(&self) -> usize {
         self.cursor_pos
     }
