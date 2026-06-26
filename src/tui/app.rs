@@ -199,9 +199,21 @@ mod tests {
     use crate::models::todo_item::TodoItem;
     use crate::schema;
     use chrono::Utc;
+    use std::sync::OnceLock;
     use uuid::Uuid;
 
+    static TZ_INIT: OnceLock<()> = OnceLock::new();
+
+    fn ensure_utc_tz() {
+        TZ_INIT.get_or_init(|| {
+            // SAFETY: tests are single-threaded for insta snapshots;
+            // setting TZ once before any rendering occurs is safe here.
+            unsafe { std::env::set_var("TZ", "UTC") };
+        });
+    }
+
     async fn test_app() -> App {
+        ensure_utc_tz();
         let db = Builder::new_local(":memory:")
             .experimental_custom_types(true)
             .build()

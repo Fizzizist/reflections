@@ -1,4 +1,5 @@
 use anyhow::Result;
+use chrono::Utc;
 use turso::Connection;
 
 const SCHEMA_SQL: &str = "
@@ -30,7 +31,7 @@ CREATE TABLE IF NOT EXISTS reflection (
 CREATE TABLE IF NOT EXISTS meeting (
     meeting_id uuid PRIMARY KEY,
     name text NOT NULL,
-    scheduled_at timestamp NOT NULL DEFAULT '1970-01-01T00:00:00Z',
+    scheduled_at timestamp NOT NULL,
     created_at timestamp NOT NULL,
     updated_at timestamp NOT NULL
 ) STRICT;
@@ -59,11 +60,17 @@ CREATE TABLE IF NOT EXISTS summary (
     created_at timestamp NOT NULL,
     updated_at timestamp NOT NULL
 ) STRICT;
+
+CREATE TABLE IF NOT EXISTS schema_versions (
+    version INTEGER PRIMARY KEY,
+    applied_at TEXT NOT NULL
+) STRICT;
 ";
 
-const MIGRATIONS: &[&str] = &[
+const MIGRATIONS: &[(i64, &str)] = &[(
+    1,
     "ALTER TABLE meeting ADD COLUMN scheduled_at timestamp NOT NULL DEFAULT '1970-01-01T00:00:00Z'",
-];
+)];
 
 pub async fn init_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(SCHEMA_SQL).await?;
@@ -71,13 +78,38 @@ pub async fn init_schema(conn: &Connection) -> Result<()> {
 }
 
 pub async fn run_migrations(conn: &Connection) -> Result<()> {
-    for migration in MIGRATIONS {
-        if let Err(e) = conn.execute_batch(migration).await {
-            let err_msg = e.to_string().to_lowercase();
-            if err_msg.contains("duplicate column name") {
-                continue;
+    conn.execute_batch("CREATE TABLE IF NOT EXISTS schema_versions (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)").await?;
+
+    for (version, sql) in MIGRATIONS {
+        let mut rows = conn
+            .query(
+                "SELECT version FROM schema_versions WHERE version = ?",
+                [*version],
+            )
+            .await?;
+        let already_applied = rows.next().await?.is_some();
+        drop(rows);
+
+        if !already_applied {
+            match conn.execute_batch(sql).await {
+                Ok(()) => {}
+                Err(e) => {
+                    let err_msg = e.to_string().to_lowercase();
+                    if err_msg.contains("duplicate column name") {
+                        // Column already exists (e.g., from fresh install with updated schema)
+                    } else {
+                        return Err(e.into());
+                    }
+                }
             }
-            return Err(e.into());
+            let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+            let mut rows = conn
+                .query(
+                    "INSERT INTO schema_versions (version, applied_at) VALUES (?, ?)",
+                    (*version, now),
+                )
+                .await?;
+            while rows.next().await.is_ok_and(|r| r.is_some()) {}
         }
     }
     Ok(())
@@ -110,6 +142,7 @@ mod tests {
             "note",
             "tag",
             "summary",
+            "schema_versions",
         ];
 
         for table in &expected_tables {
@@ -191,5 +224,52 @@ CREATE TABLE IF NOT EXISTS meeting (
         run_migrations(&conn)
             .await
             .expect("second migration run failed");
+    }
+
+    #[tokio::test]
+    async fn migrations_skip_already_applied() {
+        let conn = test_conn().await;
+        init_schema(&conn).await.expect("schema init failed");
+
+        run_migrations(&conn)
+            .await
+            .expect("first migration run failed");
+
+        let mut rows = conn
+            .query("SELECT COUNT(*) FROM schema_versions", ())
+            .await
+            .expect("query failed");
+        let row = rows
+            .next()
+            .await
+            .expect("fetch failed")
+            .expect("row exists");
+        let count: i64 = *row
+            .get_value(0)
+            .expect("get failed")
+            .as_integer()
+            .expect("expected int");
+        drop(rows);
+        assert_eq!(count, 1, "should have exactly 1 migration recorded");
+
+        run_migrations(&conn)
+            .await
+            .expect("second migration run failed");
+
+        let mut rows = conn
+            .query("SELECT COUNT(*) FROM schema_versions", ())
+            .await
+            .expect("query failed");
+        let row = rows
+            .next()
+            .await
+            .expect("fetch failed")
+            .expect("row exists");
+        let count: i64 = *row
+            .get_value(0)
+            .expect("get failed")
+            .as_integer()
+            .expect("expected int");
+        assert_eq!(count, 1, "should still have exactly 1 migration recorded");
     }
 }

@@ -1,17 +1,10 @@
 use anyhow::Result;
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
 use turso::{Connection, Error::QueryReturnedNoRows, transaction::Transaction};
 use uuid::Uuid;
 
 use crate::models::meeting::Meeting;
-
-fn parse_timestamp(s: &str) -> Result<DateTime<Utc>> {
-    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
-        return Ok(dt.with_timezone(&Utc));
-    }
-    let naive = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")?;
-    Ok(naive.and_utc())
-}
+use crate::repositories::parse_timestamp;
 
 fn row_to_meeting(row: &turso::Row) -> Result<Meeting> {
     let id_str: String = row.get(0)?;
@@ -40,7 +33,7 @@ pub async fn insert(
     let sql = r#"INSERT INTO meeting (meeting_id, name, scheduled_at, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?)
                  RETURNING meeting_id, name, scheduled_at, created_at, updated_at"#;
-    let now = Utc::now().to_rfc3339();
+    let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let id = Uuid::now_v7();
     let mut rows = tx
         .query(
@@ -48,14 +41,13 @@ pub async fn insert(
             (
                 id.to_string(),
                 name.to_string(),
-                scheduled_at.to_rfc3339(),
+                scheduled_at.format("%Y-%m-%d %H:%M:%S").to_string(),
                 now.clone(),
                 now,
             ),
         )
         .await?;
     let row = rows.next().await?;
-    drop(rows);
     if let Some(row) = row {
         return row_to_meeting(&row);
     }

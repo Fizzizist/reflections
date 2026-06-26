@@ -89,9 +89,15 @@ impl MeetingModal {
                 self.dt_section = DATETIME_SECTIONS.len() - 1;
                 None
             }
+            KeyCode::Char('q') => {
+                self.close();
+                None
+            }
             KeyCode::Char(c) => {
-                self.name_buffer.insert(self.name_cursor, c);
-                self.name_cursor += 1;
+                if !c.is_control() && self.name_buffer.len() < 200 {
+                    self.name_buffer.insert(self.name_cursor, c);
+                    self.name_cursor += 1;
+                }
                 None
             }
             KeyCode::Backspace => {
@@ -143,6 +149,10 @@ impl MeetingModal {
             KeyCode::BackTab => {
                 self.commit_dt_typing();
                 self.field_focus = FieldFocus::Name;
+                None
+            }
+            KeyCode::Char('q') => {
+                self.close();
                 None
             }
             KeyCode::Char('h') => {
@@ -279,7 +289,8 @@ impl MeetingModal {
     }
 
     fn days_in_month(&self) -> u32 {
-        chrono::NaiveDate::from_ymd_opt(self.year, self.month, 1)
+        let year = self.year.clamp(1900, 9999);
+        chrono::NaiveDate::from_ymd_opt(year, self.month, 1)
             .map(|d| d + chrono::Months::new(1) - chrono::Duration::days(1))
             .map(|d| d.day())
             .unwrap_or(28)
@@ -558,13 +569,24 @@ mod tests {
     }
 
     #[test]
-    fn q_is_inserted_as_text_in_name_field() {
+    fn q_closes_modal_from_name_field() {
         let mut modal = MeetingModal::new();
         modal.open();
 
-        modal.handle_key(key_char('q'));
-        assert_eq!(modal.name_buffer, "q");
-        assert!(modal.is_active());
+        let result = modal.handle_key(key_char('q'));
+        assert!(result.is_none());
+        assert!(!modal.is_active());
+    }
+
+    #[test]
+    fn q_closes_modal_from_datetime_field() {
+        let mut modal = MeetingModal::new();
+        modal.open();
+        modal.handle_key(key_tab());
+
+        let result = modal.handle_key(key_char('q'));
+        assert!(result.is_none());
+        assert!(!modal.is_active());
     }
 
     #[test]
@@ -819,5 +841,31 @@ mod tests {
         modal.handle_key(key_char('9'));
 
         assert_eq!(modal.year, 1999);
+    }
+
+    #[test]
+    fn name_field_enforces_max_length_of_200() {
+        let mut modal = MeetingModal::new();
+        modal.open();
+
+        for _ in 0..201 {
+            modal.handle_key(key_char('a'));
+        }
+
+        assert_eq!(modal.name_buffer.len(), 200);
+    }
+
+    #[test]
+    fn name_field_rejects_control_characters() {
+        let mut modal = MeetingModal::new();
+        modal.open();
+
+        modal.handle_key(key_char('a'));
+        modal.handle_key(key_char('\x01'));
+        modal.handle_key(key_char('\n'));
+        modal.handle_key(key_char('\t'));
+        modal.handle_key(key_char('b'));
+
+        assert_eq!(modal.name_buffer, "ab");
     }
 }

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::{DateTime, Local, LocalResult, Utc};
+use chrono::{DateTime, Local, LocalResult, TimeZone, Utc};
 use turso::Connection;
 
 use crate::models::event::EventType;
@@ -36,7 +36,10 @@ impl MeetingService {
         let start = match local_midnight.and_local_timezone(Local) {
             LocalResult::Single(dt) => dt.with_timezone(&Utc),
             LocalResult::Ambiguous(dt, _) => dt.with_timezone(&Utc),
-            LocalResult::None => Utc::now(),
+            LocalResult::None => {
+                let date = now.date_naive();
+                Utc.from_utc_datetime(&date.and_hms_opt(0, 0, 0).expect("midnight is valid"))
+            }
         };
         let end = start + chrono::Duration::days(1);
         repositories::meeting::list_by_date(&self.conn, start, end).await
@@ -77,7 +80,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_meeting_creates_event() {
+    async fn create_meeting_created_event() {
         let mut service = setup().await;
         let scheduled_at = Utc::now();
 
@@ -148,7 +151,10 @@ mod tests {
         let today_start = match local_midnight.and_local_timezone(Local) {
             LocalResult::Single(dt) => dt.with_timezone(&Utc),
             LocalResult::Ambiguous(dt, _) => dt.with_timezone(&Utc),
-            LocalResult::None => Utc::now(),
+            LocalResult::None => {
+                let date = now.date_naive();
+                Utc.from_utc_datetime(&date.and_hms_opt(0, 0, 0).expect("midnight is valid"))
+            }
         };
 
         let today_meeting = service

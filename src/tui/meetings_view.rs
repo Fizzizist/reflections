@@ -47,7 +47,11 @@ impl MeetingsView {
     pub async fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
         if self.meeting_modal.is_active() {
             if let Some((name, scheduled_at)) = self.meeting_modal.handle_key(key) {
-                self.service.create_meeting(&name, scheduled_at).await?;
+                if let Err(e) = self.service.create_meeting(&name, scheduled_at).await {
+                    drop(e);
+                    self.meeting_modal.close();
+                    return Ok(());
+                }
                 self.load_items().await?;
                 self.clamp_selected_index();
             }
