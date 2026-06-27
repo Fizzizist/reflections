@@ -72,7 +72,7 @@ impl App {
         let reflections = self.reflection_service.list_reflections().await?;
         let mut labels = Vec::with_capacity(reflections.len());
         for reflection in &reflections {
-            labels.push(self.reflection_service.resolve_label(reflection).await);
+            labels.push(self.reflection_service.resolve_label(reflection).await?);
         }
         self.reflections_view
             .set_items_with_labels(reflections, labels);
@@ -824,5 +824,65 @@ mod tests {
             .expect("list failed");
         assert_eq!(reflections.len(), 1);
         assert!(reflections[0].about_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn r_key_on_meetings_creates_reflection() {
+        let mut app = test_app().await;
+        app.init().await.expect("init failed");
+        app.active_tab = Tab::Meetings;
+        app.meetings_view.set_items(vec![fixed_meeting("Standup")]);
+        app.meetings_view.set_selected_index(0);
+
+        app.set_editor_fn(Box::new(|path: &std::path::Path| {
+            std::fs::write(path, "meeting reflection content")?;
+            Ok(())
+        }));
+
+        let key_r = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE);
+        app.handle_key(key_r).await.expect("handle_key failed");
+
+        let reflections = app
+            .reflection_service
+            .list_reflections()
+            .await
+            .expect("list failed");
+        assert_eq!(reflections.len(), 1);
+        assert!(reflections[0].about_id.is_some());
+    }
+
+    #[tokio::test]
+    async fn r_key_with_no_selection_does_nothing() {
+        let mut app = test_app().await;
+        app.init().await.expect("init failed");
+        app.todo_list_view.set_items(vec![fixed_item("task 1")]);
+
+        let key_r = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE);
+        app.handle_key(key_r).await.expect("handle_key failed");
+
+        let reflections = app
+            .reflection_service
+            .list_reflections()
+            .await
+            .expect("list failed");
+        assert_eq!(reflections.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn empty_editor_exit_cleans_up_reflection() {
+        let mut app = test_app().await;
+        app.init().await.expect("init failed");
+
+        app.set_editor_fn(Box::new(|_path: &std::path::Path| Ok(())));
+
+        let key_r = KeyEvent::new(KeyCode::Char('R'), KeyModifiers::NONE);
+        app.handle_key(key_r).await.expect("handle_key failed");
+
+        let reflections = app
+            .reflection_service
+            .list_reflections()
+            .await
+            .expect("list failed");
+        assert_eq!(reflections.len(), 0);
     }
 }

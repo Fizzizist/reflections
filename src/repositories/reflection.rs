@@ -56,6 +56,7 @@ pub async fn insert(
         )
         .await?;
     let row = rows.next().await?;
+    while rows.next().await?.is_some() {}
     if let Some(row) = row {
         return row_to_reflection(&row);
     }
@@ -84,7 +85,7 @@ pub async fn get_by_id(tx: &Transaction<'_>, id: Uuid) -> Result<Reflection> {
     let sql = "SELECT reflection_id, about_id, file_path, created_at, updated_at FROM reflection WHERE reflection_id = ?";
     let mut rows = tx.query(sql, (id.to_string(),)).await?;
     let row = rows.next().await?;
-    while rows.next().await.is_ok_and(|r| r.is_some()) {}
+    while rows.next().await?.is_some() {}
     if let Some(row) = row {
         return row_to_reflection(&row);
     }

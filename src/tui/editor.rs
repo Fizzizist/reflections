@@ -28,7 +28,9 @@ fn run_editor(file_path: &Path) -> Result<()> {
         .status()?;
 
     if !status.success() {
+        // End-of-process user-facing notice: editor exited abnormally
         writeln!(io::stderr(), "editor exited with non-zero status")?;
+        return Err(anyhow::anyhow!("editor exited with non-zero status"));
     }
 
     Ok(())

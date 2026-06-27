@@ -112,3 +112,107 @@ impl ReflectionsView {
         self.clamp_selected_index();
     }
 }
+
+#[cfg(test)]
+impl ReflectionsView {
+    pub fn set_items(&mut self, items: Vec<Reflection>) {
+        self.items = items;
+        self.labels = (0..self.items.len()).map(|_| String::new()).collect();
+    }
+
+    pub fn set_selected_index(&mut self, idx: usize) {
+        self.selected_index = Some(idx);
+    }
+
+    pub fn selected_index(&self) -> Option<usize> {
+        self.selected_index
+    }
+
+    pub fn clamp_selected_index_for_test(&mut self) {
+        self.clamp_selected_index();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use uuid::Uuid;
+
+    fn fixed_reflection() -> Reflection {
+        let fixed_time = chrono::DateTime::parse_from_rfc3339("2024-01-15T10:30:00Z")
+            .expect("parse failed")
+            .with_timezone(&Utc);
+        Reflection {
+            id: Uuid::now_v7(),
+            about_id: None,
+            file_path: "2024/01/15/test.md".to_string(),
+            created_at: fixed_time,
+            updated_at: fixed_time,
+        }
+    }
+
+    fn key_j() -> KeyEvent {
+        KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE)
+    }
+
+    fn key_k() -> KeyEvent {
+        KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE)
+    }
+
+    #[tokio::test]
+    async fn j_selects_first_item() {
+        let mut view = ReflectionsView::new();
+        view.set_items(vec![fixed_reflection(), fixed_reflection()]);
+
+        view.handle_key(key_j()).await.expect("handle_key failed");
+        assert_eq!(view.selected_index(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn j_then_j_selects_second_item() {
+        let mut view = ReflectionsView::new();
+        view.set_items(vec![fixed_reflection(), fixed_reflection()]);
+
+        view.handle_key(key_j()).await.expect("handle_key failed");
+        view.handle_key(key_j()).await.expect("handle_key failed");
+        assert_eq!(view.selected_index(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn k_at_first_stays_at_first() {
+        let mut view = ReflectionsView::new();
+        view.set_items(vec![fixed_reflection(), fixed_reflection()]);
+
+        view.handle_key(key_j()).await.expect("handle_key failed");
+        view.handle_key(key_k()).await.expect("handle_key failed");
+        assert_eq!(view.selected_index(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn j_on_empty_list_does_nothing() {
+        let mut view = ReflectionsView::new();
+        view.handle_key(key_j()).await.expect("handle_key failed");
+        assert_eq!(view.selected_index(), None);
+    }
+
+    #[tokio::test]
+    async fn k_on_empty_list_does_nothing() {
+        let mut view = ReflectionsView::new();
+        view.handle_key(key_k()).await.expect("handle_key failed");
+        assert_eq!(view.selected_index(), None);
+    }
+
+    #[test]
+    fn clamp_selected_index_after_items_disappear() {
+        let mut view = ReflectionsView::new();
+        view.set_items(vec![fixed_reflection(), fixed_reflection()]);
+        view.set_selected_index(1);
+        assert_eq!(view.selected_index(), Some(1));
+
+        view.set_items(vec![fixed_reflection()]);
+        view.clamp_selected_index_for_test();
+        assert_eq!(view.selected_index(), Some(0));
+    }
+}

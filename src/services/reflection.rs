@@ -29,16 +29,15 @@ impl ReflectionService {
         let relative_path = format!("{}/{}", date_dir, file_name);
         let full_path = self.root_dir.join(&relative_path);
 
-        let dir_path = full_path.parent().expect("full_path has a parent");
-        create_dir_all(dir_path).await?;
-
-        fs::write(&full_path, "").await?;
-
         let tx = self.conn.transaction().await?;
         let reflection = repositories::reflection::insert(&tx, about_id, &relative_path).await?;
         repositories::event::insert(&tx, reflection.id, &EventType::ReflectionCreated, "{}")
             .await?;
         tx.commit().await?;
+
+        let dir_path = full_path.parent().expect("full_path has a parent");
+        create_dir_all(dir_path).await?;
+        fs::write(&full_path, "").await?;
 
         Ok(reflection)
     }
@@ -46,7 +45,6 @@ impl ReflectionService {
     pub async fn cleanup_reflection(&mut self, id: Uuid) -> Result<()> {
         let tx = self.conn.transaction().await?;
         let reflection = repositories::reflection::get_by_id(&tx, id).await?;
-        tx.commit().await?;
 
         let full_path = self.root_dir.join(&reflection.file_path);
         let is_empty_or_missing = match fs::metadata(&full_path).await {
@@ -55,11 +53,16 @@ impl ReflectionService {
         };
 
         if is_empty_or_missing {
-            let tx = self.conn.transaction().await?;
             repositories::reflection::delete(&tx, id).await?;
             tx.commit().await?;
 
-            let _ = fs::remove_file(&full_path).await;
+            if let Err(e) = fs::remove_file(&full_path).await
+                && e.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(e.into());
+            }
+        } else {
+            tx.commit().await?;
         }
 
         Ok(())
@@ -69,12 +72,12 @@ impl ReflectionService {
         repositories::reflection::list_ordered_by_updated_at(&self.conn).await
     }
 
-    pub async fn resolve_label(&self, reflection: &Reflection) -> String {
+    pub async fn resolve_label(&self, reflection: &Reflection) -> Result<String> {
         match reflection.about_id {
-            None => format!(
+            None => Ok(format!(
                 "General Reflection {}",
                 reflection.created_at.format("%Y-%m-%d %H:%M")
-            ),
+            )),
             Some(id) => {
                 let mut rows = self
                     .conn
@@ -82,12 +85,11 @@ impl ReflectionService {
                         "SELECT label FROM todo_item WHERE todo_item_id = ?",
                         [id.to_string()],
                     )
-                    .await
-                    .expect("todo_item query failed");
+                    .await?;
 
-                if let Some(row) = rows.next().await.expect("row fetch failed") {
-                    let label: String = row.get(0).expect("get label");
-                    return format!("TODO Item Reflection {}", label);
+                if let Some(row) = rows.next().await? {
+                    let label: String = row.get(0)?;
+                    return Ok(format!("TODO Item Reflection {}", label));
                 }
 
                 let mut rows = self
@@ -96,18 +98,17 @@ impl ReflectionService {
                         "SELECT name FROM meeting WHERE meeting_id = ?",
                         [id.to_string()],
                     )
-                    .await
-                    .expect("meeting query failed");
+                    .await?;
 
-                if let Some(row) = rows.next().await.expect("row fetch failed") {
-                    let name: String = row.get(0).expect("get name");
-                    return format!("Meeting Reflection {}", name);
+                if let Some(row) = rows.next().await? {
+                    let name: String = row.get(0)?;
+                    return Ok(format!("Meeting Reflection {}", name));
                 }
 
-                format!(
+                Ok(format!(
                     "General Reflection {}",
                     reflection.created_at.format("%Y-%m-%d %H:%M")
-                )
+                ))
             }
         }
     }
@@ -223,6 +224,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cleanup_reflection_preserves_non_empty_file() {
+        let (mut svc, root_dir) = setup().await;
+
+        let reflection = svc.create_reflection(None).await.expect("create failed");
+
+        let full_path = root_dir.join(&reflection.file_path);
+        fs::write(&full_path, "reflection content")
+            .await
+            .expect("write failed");
+
+        svc.cleanup_reflection(reflection.id)
+            .await
+            .expect("cleanup failed");
+
+        let reflections = svc.list_reflections().await.expect("list failed");
+        assert_eq!(reflections.len(), 1);
+        assert_eq!(reflections[0].id, reflection.id);
+
+        let content = fs::read_to_string(&full_path).await.expect("read failed");
+        assert_eq!(content, "reflection content");
+    }
+
+    #[tokio::test]
     async fn list_reflections_ordered_by_updated_at() {
         let (mut svc, _root_dir) = setup().await;
 
@@ -253,7 +277,10 @@ mod tests {
             .await
             .expect("create failed");
 
-        let label = svc.resolve_label(&reflection).await;
+        let label = svc
+            .resolve_label(&reflection)
+            .await
+            .expect("resolve failed");
         assert!(label.starts_with("TODO Item Reflection"));
         assert!(label.contains("Test Todo"));
     }
@@ -274,7 +301,10 @@ mod tests {
             .await
             .expect("create failed");
 
-        let label = svc.resolve_label(&reflection).await;
+        let label = svc
+            .resolve_label(&reflection)
+            .await
+            .expect("resolve failed");
         assert!(label.starts_with("Meeting Reflection"));
         assert!(label.contains("Test Meeting"));
     }
@@ -285,7 +315,10 @@ mod tests {
 
         let reflection = svc.create_reflection(None).await.expect("create failed");
 
-        let label = svc.resolve_label(&reflection).await;
+        let label = svc
+            .resolve_label(&reflection)
+            .await
+            .expect("resolve failed");
         assert!(label.starts_with("General Reflection"));
     }
 }
