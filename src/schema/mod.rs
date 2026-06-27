@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS event (
 
 CREATE TABLE IF NOT EXISTS reflection (
     reflection_id uuid PRIMARY KEY,
-    about_id uuid NOT NULL,
+    about_id uuid,
     file_path text NOT NULL,
     created_at timestamp NOT NULL,
     updated_at timestamp NOT NULL
@@ -67,10 +67,26 @@ CREATE TABLE IF NOT EXISTS schema_versions (
 ) STRICT;
 ";
 
-const MIGRATIONS: &[(i64, &str)] = &[(
-    1,
-    "ALTER TABLE meeting ADD COLUMN scheduled_at timestamp NOT NULL DEFAULT '1970-01-01T00:00:00Z'",
-)];
+const MIGRATIONS: &[(i64, &str)] = &[
+    (
+        1,
+        "ALTER TABLE meeting ADD COLUMN scheduled_at timestamp NOT NULL DEFAULT '1970-01-01T00:00:00Z'",
+    ),
+    (
+        2,
+        "CREATE TABLE IF NOT EXISTS reflection_new (
+            reflection_id uuid PRIMARY KEY,
+            about_id uuid,
+            file_path text NOT NULL,
+            created_at timestamp NOT NULL,
+            updated_at timestamp NOT NULL
+        ) STRICT;
+        INSERT INTO reflection_new (reflection_id, about_id, file_path, created_at, updated_at)
+            SELECT reflection_id, about_id, file_path, created_at, updated_at FROM reflection;
+        DROP TABLE reflection;
+        ALTER TABLE reflection_new RENAME TO reflection;",
+    ),
+];
 
 pub async fn init_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(SCHEMA_SQL).await?;
@@ -97,6 +113,8 @@ pub async fn run_migrations(conn: &Connection) -> Result<()> {
                     let err_msg = e.to_string().to_lowercase();
                     if err_msg.contains("duplicate column name") {
                         // Column already exists (e.g., from fresh install with updated schema)
+                    } else if err_msg.contains("no such table") {
+                        // Table already migrated or doesn't exist in this DB state
                     } else {
                         return Err(e.into());
                     }
@@ -250,7 +268,7 @@ CREATE TABLE IF NOT EXISTS meeting (
             .as_integer()
             .expect("expected int");
         drop(rows);
-        assert_eq!(count, 1, "should have exactly 1 migration recorded");
+        assert_eq!(count, 2, "should have exactly 2 migrations recorded");
 
         run_migrations(&conn)
             .await
@@ -270,6 +288,54 @@ CREATE TABLE IF NOT EXISTS meeting (
             .expect("get failed")
             .as_integer()
             .expect("expected int");
-        assert_eq!(count, 1, "should still have exactly 1 migration recorded");
+        assert_eq!(count, 2, "should still have exactly 2 migrations recorded");
+    }
+
+    #[tokio::test]
+    async fn migration_makes_about_id_nullable() {
+        let conn = test_conn().await;
+
+        let old_reflection_schema = "
+CREATE TABLE IF NOT EXISTS reflection (
+    reflection_id uuid PRIMARY KEY,
+    about_id uuid NOT NULL,
+    file_path text NOT NULL,
+    created_at timestamp NOT NULL,
+    updated_at timestamp NOT NULL
+) STRICT;
+";
+        conn.execute_batch(old_reflection_schema)
+            .await
+            .expect("failed to create old reflection schema");
+
+        conn.execute_batch(
+            "INSERT INTO reflection (reflection_id, about_id, file_path, created_at, updated_at) VALUES ('019598a0-0000-7000-8000-000000000001', '019598a0-0000-7000-8000-000000000002', '2024/01/15/test.md', '2024-01-15T10:30:00Z', '2024-01-15T10:30:00Z')",
+        )
+        .await
+        .expect("insert with NOT NULL about_id failed");
+
+        run_migrations(&conn).await.expect("migration failed");
+
+        conn.execute_batch(
+            "INSERT INTO reflection (reflection_id, about_id, file_path, created_at, updated_at) VALUES ('019598a0-0000-7000-8000-000000000003', NULL, '2024/01/15/test2.md', '2024-01-15T11:00:00Z', '2024-01-15T11:00:00Z')",
+        )
+        .await
+        .expect("insert with NULL about_id failed after migration");
+
+        let mut rows = conn
+            .query("SELECT COUNT(*) FROM reflection WHERE about_id IS NULL", ())
+            .await
+            .expect("query failed");
+        let row = rows
+            .next()
+            .await
+            .expect("fetch failed")
+            .expect("row exists");
+        let count: i64 = *row
+            .get_value(0)
+            .expect("get failed")
+            .as_integer()
+            .expect("expected int");
+        assert_eq!(count, 1, "should have one row with NULL about_id");
     }
 }

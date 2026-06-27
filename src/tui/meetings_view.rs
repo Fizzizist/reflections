@@ -154,6 +154,12 @@ impl MeetingsView {
     pub fn is_modal_active(&self) -> bool {
         self.meeting_modal.is_active()
     }
+
+    pub fn selected_item_id(&self) -> Option<uuid::Uuid> {
+        self.selected_index
+            .and_then(|idx| self.items.get(idx))
+            .map(|item| item.id)
+    }
 }
 
 #[cfg(test)]

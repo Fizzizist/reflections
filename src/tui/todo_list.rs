@@ -199,6 +199,12 @@ impl TodoListView {
     pub fn is_modal_active(&self) -> bool {
         self.input_modal.is_active() || self.status_modal.is_active()
     }
+
+    pub fn selected_item_id(&self) -> Option<uuid::Uuid> {
+        self.selected_index
+            .and_then(|idx| self.items.get(idx))
+            .map(|item| item.id)
+    }
 }
 
 #[cfg(test)]
