@@ -1,18 +1,11 @@
 use anyhow::Result;
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::Utc;
 use turso::{Connection, Error::QueryReturnedNoRows, transaction::Transaction};
 use uuid::Uuid;
 
 use crate::models::todo_item::{TodoItem, TodoStatus};
+use crate::repositories::parse_timestamp;
 use std::str::FromStr;
-
-fn parse_timestamp(s: &str) -> Result<DateTime<Utc>> {
-    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
-        return Ok(dt.with_timezone(&Utc));
-    }
-    let naive = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")?;
-    Ok(naive.and_utc())
-}
 
 fn row_to_todo_item(row: &turso::Row) -> Result<TodoItem> {
     let id_str: String = row.get(0)?;
@@ -52,7 +45,6 @@ pub async fn insert(tx: &Transaction<'_>, label: &str) -> Result<TodoItem> {
         )
         .await?;
     let row = rows.next().await?;
-    drop(rows);
     if let Some(row) = row {
         return row_to_todo_item(&row);
     }

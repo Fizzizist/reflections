@@ -51,7 +51,7 @@ the `schema` module and are applied at startup.
 ### Models
 
 The `models` module defines plain domain structs and their associated enums (e.g. `TodoItem`,
-`TodoStatus`, `Event`, `EventType`). Models are the in-memory representation of database rows
+`TodoStatus`, `Meeting`, `Event`, `EventType`). Models are the in-memory representation of database rows
 and carry no business logic themselves. Repositories translate between these model structs and
 the database tables.
 
@@ -60,7 +60,9 @@ the database tables.
 Inside the `tui` module is all of the ratatui widgets for display. The root struct is App, which
 is fed a list of services in order to enact application logic. No application logic lives inside
 the tui, it is just built to display. Any action performed by a user in the TUI is routed to a
-service to actually enact it.
+service to actually enact it. The `tui` module includes reusable sub-components such as
+`InputBox` (text input with cursor, character filtering, and max length) and modal widgets
+(`InputModal`, `MeetingModal`, `StatusModal`).
 
 ### CLI
 
@@ -84,6 +86,8 @@ repository module for an entity should contain the SQL statements that get sent 
 ### Schema
 
 The `schema` module contains all DDL statements (`CREATE TABLE IF NOT EXISTS ...`) and exposes
-an `init_schema` function that is called at startup to ensure the database schema exists. All
-table definitions are centralized here; repositories should not create or alter tables.
+an `init_schema` function that is called at startup to ensure the database schema exists. It also
+exposes a `run_migrations` function for applying `ALTER TABLE` migrations to existing databases,
+tracked via a `schema_versions` table. All table definitions and migrations are centralized here;
+repositories should not create or alter tables.
 

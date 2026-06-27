@@ -1,22 +1,21 @@
+use super::input_box::InputBox;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
     layout::Rect,
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Block, Borders, Clear},
 };
 
 pub struct InputModal {
     active: bool,
-    buffer: String,
-    cursor_pos: usize,
+    input: InputBox,
 }
 
 impl InputModal {
     pub fn new() -> Self {
         Self {
             active: false,
-            buffer: String::new(),
-            cursor_pos: 0,
+            input: InputBox::new(),
         }
     }
 
@@ -26,8 +25,7 @@ impl InputModal {
 
     pub fn open(&mut self) {
         self.active = true;
-        self.buffer.clear();
-        self.cursor_pos = 0;
+        self.input.clear();
     }
 
     pub fn close(&mut self) {
@@ -36,36 +34,15 @@ impl InputModal {
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<String> {
         match key.code {
-            KeyCode::Enter => Some(self.buffer.clone()),
+            KeyCode::Enter => Some(self.input.value().to_string()),
             KeyCode::Esc => {
                 self.close();
                 None
             }
-            KeyCode::Backspace => {
-                if self.cursor_pos > 0 && !self.buffer.is_empty() {
-                    self.buffer.remove(self.cursor_pos - 1);
-                    self.cursor_pos -= 1;
-                }
+            _ => {
+                self.input.handle_key(key);
                 None
             }
-            KeyCode::Char(c) => {
-                self.buffer.insert(self.cursor_pos, c);
-                self.cursor_pos += 1;
-                None
-            }
-            KeyCode::Left => {
-                if self.cursor_pos > 0 {
-                    self.cursor_pos -= 1;
-                }
-                None
-            }
-            KeyCode::Right => {
-                if self.cursor_pos < self.buffer.len() {
-                    self.cursor_pos += 1;
-                }
-                None
-            }
-            _ => None,
         }
     }
 
@@ -87,16 +64,8 @@ impl InputModal {
         frame.render_widget(block.clone(), modal_area);
 
         let inner = block.inner(modal_area);
-
-        let display_text = if self.cursor_pos >= self.buffer.len() {
-            format!("{}█", self.buffer)
-        } else {
-            let (before, after) = self.buffer.split_at(self.cursor_pos);
-            format!("{}█{}", before, after)
-        };
-
-        let paragraph = Paragraph::new(display_text);
-        frame.render_widget(paragraph, inner);
+        self.input
+            .render(frame, inner, ratatui::style::Style::default());
     }
 }
 
@@ -162,7 +131,7 @@ mod tests {
         modal.handle_key(key_char('l'));
         modal.handle_key(key_char('o'));
         modal.handle_key(key_backspace());
-        assert_eq!(modal.buffer, "hell");
+        assert_eq!(modal.input.value(), "hell");
     }
 
     #[test]
@@ -170,8 +139,8 @@ mod tests {
         let mut modal = InputModal::new();
         modal.open();
         modal.handle_key(key_backspace());
-        assert_eq!(modal.buffer, "");
-        assert_eq!(modal.cursor_pos, 0);
+        assert_eq!(modal.input.value(), "");
+        assert_eq!(modal.input.cursor_pos(), 0);
     }
 
     #[test]
@@ -181,8 +150,8 @@ mod tests {
         modal.handle_key(key_char('a'));
         modal.handle_key(key_char('b'));
         modal.handle_key(key_char('c'));
-        assert_eq!(modal.buffer, "abc");
-        assert_eq!(modal.cursor_pos, 3);
+        assert_eq!(modal.input.value(), "abc");
+        assert_eq!(modal.input.cursor_pos(), 3);
     }
 
     #[test]
@@ -193,7 +162,7 @@ mod tests {
         modal.handle_key(key_char('c'));
         modal.handle_key(key_left());
         modal.handle_key(key_char('b'));
-        assert_eq!(modal.buffer, "abc");
+        assert_eq!(modal.input.value(), "abc");
     }
 
     #[test]
@@ -204,7 +173,7 @@ mod tests {
         modal.handle_key(key_char('b'));
         modal.handle_key(key_char('c'));
         modal.handle_key(key_left());
-        assert_eq!(modal.cursor_pos, 2);
+        assert_eq!(modal.input.cursor_pos(), 2);
     }
 
     #[test]
@@ -212,7 +181,7 @@ mod tests {
         let mut modal = InputModal::new();
         modal.open();
         modal.handle_key(key_left());
-        assert_eq!(modal.cursor_pos, 0);
+        assert_eq!(modal.input.cursor_pos(), 0);
     }
 
     #[test]
@@ -225,7 +194,7 @@ mod tests {
         modal.handle_key(key_left());
         modal.handle_key(key_left());
         modal.handle_key(key_right());
-        assert_eq!(modal.cursor_pos, 2);
+        assert_eq!(modal.input.cursor_pos(), 2);
     }
 
     #[test]
@@ -236,7 +205,7 @@ mod tests {
         modal.handle_key(key_char('b'));
         modal.handle_key(key_char('c'));
         modal.handle_key(key_right());
-        assert_eq!(modal.cursor_pos, 3);
+        assert_eq!(modal.input.cursor_pos(), 3);
     }
 
     #[test]

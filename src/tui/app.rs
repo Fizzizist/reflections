@@ -1,3 +1,4 @@
+use crate::services::meeting::MeetingService;
 use crate::services::todo::TodoService;
 
 use super::meetings_view::MeetingsView;
@@ -36,10 +37,10 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(todo_service: TodoService) -> Self {
+    pub fn new(todo_service: TodoService, meeting_service: MeetingService) -> Self {
         Self {
             todo_list_view: TodoListView::new(todo_service),
-            meetings_view: MeetingsView::new(),
+            meetings_view: MeetingsView::new(meeting_service),
             reflections_view: ReflectionsView::new(),
             active_tab: Tab::TodoList,
             pending_g_prefix: false,
@@ -47,7 +48,9 @@ impl App {
     }
 
     pub async fn init(&mut self) -> Result<()> {
-        self.todo_list_view.init().await
+        self.todo_list_view.init().await?;
+        self.meetings_view.init().await?;
+        Ok(())
     }
 
     pub async fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
@@ -76,7 +79,7 @@ impl App {
 
         match self.active_tab {
             Tab::TodoList => self.todo_list_view.handle_key(key).await?,
-            Tab::Meetings => {}
+            Tab::Meetings => self.meetings_view.handle_key(key).await?,
             Tab::Reflections => {}
         }
         Ok(())
@@ -95,7 +98,7 @@ impl App {
     fn is_modal_active(&self) -> bool {
         match self.active_tab {
             Tab::TodoList => self.todo_list_view.is_modal_active(),
-            Tab::Meetings => false,
+            Tab::Meetings => self.meetings_view.is_modal_active(),
             Tab::Reflections => false,
         }
     }
@@ -135,8 +138,9 @@ fn is_global_quit(key: &KeyEvent) -> bool {
 async fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     todo_service: TodoService,
+    meeting_service: MeetingService,
 ) -> Result<()> {
-    let mut app = App::new(todo_service);
+    let mut app = App::new(todo_service, meeting_service);
     app.init().await?;
     terminal.draw(|frame| render_app(&mut app, frame))?;
 
@@ -168,13 +172,13 @@ async fn run_app(
     Ok(())
 }
 
-pub async fn run(todo_service: TodoService) -> Result<()> {
+pub async fn run(todo_service: TodoService, meeting_service: MeetingService) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    let result = run_app(&mut terminal, todo_service).await;
+    let result = run_app(&mut terminal, todo_service, meeting_service).await;
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -191,12 +195,25 @@ mod tests {
     use turso::Builder;
 
     use super::*;
+    use crate::models::meeting::Meeting;
     use crate::models::todo_item::TodoItem;
     use crate::schema;
     use chrono::Utc;
+    use std::sync::OnceLock;
     use uuid::Uuid;
 
+    static TZ_INIT: OnceLock<()> = OnceLock::new();
+
+    fn ensure_utc_tz() {
+        TZ_INIT.get_or_init(|| {
+            // SAFETY: tests are single-threaded for insta snapshots;
+            // setting TZ once before any rendering occurs is safe here.
+            unsafe { std::env::set_var("TZ", "UTC") };
+        });
+    }
+
     async fn test_app() -> App {
+        ensure_utc_tz();
         let db = Builder::new_local(":memory:")
             .experimental_custom_types(true)
             .build()
@@ -206,7 +223,8 @@ mod tests {
         schema::init_schema(&conn)
             .await
             .expect("schema init failed");
-        App::new(TodoService::new(conn))
+        let conn2 = db.connect().expect("trouble connecting to the db");
+        App::new(TodoService::new(conn), MeetingService::new(conn2))
     }
 
     fn fixed_item(label: &str) -> TodoItem {
@@ -217,6 +235,19 @@ mod tests {
             id: Uuid::now_v7(),
             label: label.to_string(),
             status: crate::models::todo_item::TodoStatus::New,
+            created_at: fixed_time,
+            updated_at: fixed_time,
+        }
+    }
+
+    fn fixed_meeting(name: &str) -> Meeting {
+        let fixed_time = chrono::DateTime::parse_from_rfc3339("2024-01-15T10:30:00Z")
+            .expect("parse failed")
+            .with_timezone(&Utc);
+        Meeting {
+            id: Uuid::now_v7(),
+            name: name.to_string(),
+            scheduled_at: fixed_time,
             created_at: fixed_time,
             updated_at: fixed_time,
         }
@@ -427,6 +458,105 @@ mod tests {
             .draw(|frame| render_app(&mut app, frame))
             .expect("failed to draw");
         insta::assert_snapshot!("meetings view", terminal.backend());
+    }
+
+    #[tokio::test]
+    async fn populated_meetings_render() {
+        let mut app = test_app().await;
+        app.active_tab = Tab::Meetings;
+        app.meetings_view
+            .set_items(vec![fixed_meeting("Standup"), fixed_meeting("Retro")]);
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("terminal creation");
+        terminal
+            .draw(|frame| render_app(&mut app, frame))
+            .expect("failed to draw");
+        insta::assert_snapshot!("populated meetings", terminal.backend());
+    }
+
+    #[tokio::test]
+    async fn meeting_selection_clamped_after_item_disappears() {
+        let mut app = test_app().await;
+        let meeting1 = fixed_meeting("Standup");
+        let meeting2 = fixed_meeting("Retro");
+        app.meetings_view.set_items(vec![meeting1, meeting2]);
+
+        app.meetings_view.set_selected_index(1);
+        assert_eq!(app.meetings_view.selected_index(), Some(1));
+
+        app.meetings_view.set_items(vec![fixed_meeting("Standup")]);
+        app.meetings_view.clamp_selected_index_for_test();
+
+        assert_eq!(app.meetings_view.selected_index(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn meeting_modal_open_render() {
+        let mut app = test_app().await;
+        app.active_tab = Tab::Meetings;
+        app.meetings_view.set_items(vec![fixed_meeting("Standup")]);
+        app.meetings_view.open_modal();
+        app.meetings_view.set_datetime_for_test(2024, 1, 15, 10, 30);
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("terminal creation");
+        terminal
+            .draw(|frame| render_app(&mut app, frame))
+            .expect("failed to draw");
+        insta::assert_snapshot!("meeting modal open", terminal.backend());
+    }
+
+    #[tokio::test]
+    async fn a_opens_meeting_modal() {
+        let mut app = test_app().await;
+        app.active_tab = Tab::Meetings;
+        app.meetings_view.set_items(vec![fixed_meeting("Standup")]);
+
+        let key_a = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
+        app.handle_key(key_a).await.expect("handle_key failed");
+
+        assert!(app.meetings_view.is_modal_active());
+    }
+
+    #[tokio::test]
+    async fn meeting_modal_blocks_tab_switch() {
+        let mut app = test_app().await;
+        app.active_tab = Tab::Meetings;
+        app.meetings_view.set_items(vec![fixed_meeting("Standup")]);
+        app.meetings_view.open_modal();
+
+        let key_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
+        let key_t = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE);
+        app.handle_key(key_g).await.expect("handle_key failed");
+        app.handle_key(key_t).await.expect("handle_key failed");
+
+        assert!(matches!(app.active_tab, Tab::Meetings));
+        assert!(app.meetings_view.is_modal_active());
+    }
+
+    #[tokio::test]
+    async fn meeting_list_state_persists_across_tab_switch() {
+        let mut app = test_app().await;
+        app.active_tab = Tab::Meetings;
+        app.meetings_view
+            .set_items(vec![fixed_meeting("Standup"), fixed_meeting("Retro")]);
+        app.meetings_view.set_selected_index(1);
+
+        let key_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
+        let key_t = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE);
+        app.handle_key(key_g).await.expect("handle_key failed");
+        app.handle_key(key_t).await.expect("handle_key failed");
+        assert!(matches!(app.active_tab, Tab::Reflections));
+
+        app.handle_key(key_g).await.expect("handle_key failed");
+        app.handle_key(key_t).await.expect("handle_key failed");
+        assert!(matches!(app.active_tab, Tab::TodoList));
+
+        app.handle_key(key_g).await.expect("handle_key failed");
+        app.handle_key(key_t).await.expect("handle_key failed");
+        assert!(matches!(app.active_tab, Tab::Meetings));
+        assert_eq!(app.meetings_view.selected_index(), Some(1));
     }
 
     #[tokio::test]
