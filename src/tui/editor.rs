@@ -7,7 +7,6 @@ use crossterm::execute;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use ratatui::crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
 
-#[allow(dead_code)]
 pub fn open_editor(file_path: &Path) -> Result<()> {
     disable_raw_mode()?;
     execute!(io::stdout(), LeaveAlternateScreen, DisableBracketedPaste)?;
@@ -20,7 +19,6 @@ pub fn open_editor(file_path: &Path) -> Result<()> {
     editor_result
 }
 
-#[allow(dead_code)]
 fn run_editor(file_path: &Path) -> Result<()> {
     let editor = std::env::var("EDITOR").unwrap_or_else(|_| "nvim".to_string());
     let status = std::process::Command::new(&editor)
