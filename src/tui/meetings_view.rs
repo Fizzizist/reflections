@@ -91,21 +91,12 @@ impl MeetingsView {
                 if let Some(idx) = self.selected_index
                     && let Some(item) = self.items.get(idx) =>
             {
-                let reflection = self
-                    .reflection_service
-                    .create_reflection(Some(item.id))
-                    .await?;
-                let path = self.reflection_service.full_path(&reflection.file_path);
-                if let Err(e) = (self.editor_fn)(&path) {
-                    self.reflection_service
-                        .cleanup_reflection(reflection.id)
-                        .await?;
-                    return Err(e);
-                }
-                self.reflection_service
-                    .cleanup_reflection(reflection.id)
-                    .await?;
-                return Ok(true);
+                return super::editor::create_and_edit_reflection(
+                    &mut self.reflection_service,
+                    &self.editor_fn,
+                    Some(item.id),
+                )
+                .await;
             }
             _ => {}
         }

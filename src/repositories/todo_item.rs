@@ -105,6 +105,17 @@ pub async fn get_by_id(tx: &Transaction<'_>, id: Uuid) -> Result<TodoItem> {
     Err(QueryReturnedNoRows.into())
 }
 
+pub async fn find_by_id(conn: &Connection, id: Uuid) -> Result<Option<TodoItem>> {
+    let sql = "SELECT todo_item_id, label, status, created_at, updated_at FROM todo_item WHERE todo_item_id = ?";
+    let mut rows = conn.query(sql, (id.to_string(),)).await?;
+    let row = rows.next().await?;
+    while rows.next().await.is_ok_and(|r| r.is_some()) {}
+    if let Some(row) = row {
+        return Ok(Some(row_to_todo_item(&row)?));
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

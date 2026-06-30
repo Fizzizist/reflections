@@ -1,6 +1,8 @@
+use crate::services::reflection::ReflectionService;
 use anyhow::Result;
 use std::io::{self, Write};
 use std::path::Path;
+use uuid::Uuid;
 
 use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::execute;
@@ -11,6 +13,21 @@ pub type EditorFn = Box<dyn Fn(&Path) -> Result<()>>;
 
 pub fn default_editor_fn() -> EditorFn {
     Box::new(open_editor)
+}
+
+pub async fn create_and_edit_reflection(
+    reflection_service: &mut ReflectionService,
+    editor_fn: &EditorFn,
+    about_id: Option<Uuid>,
+) -> Result<bool> {
+    let reflection = reflection_service.create_reflection(about_id).await?;
+    let path = reflection_service.full_path(&reflection.file_path);
+    if let Err(e) = editor_fn(&path) {
+        reflection_service.cleanup_reflection(reflection.id).await?;
+        return Err(e);
+    }
+    reflection_service.cleanup_reflection(reflection.id).await?;
+    Ok(true)
 }
 
 pub fn open_editor(file_path: &Path) -> Result<()> {

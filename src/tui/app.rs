@@ -58,7 +58,7 @@ impl App {
                 reflection_service.clone(),
                 crate::tui::editor::default_editor_fn(),
             ),
-            reflections_view: ReflectionsView::new(),
+            reflections_view: ReflectionsView::new(reflection_service.clone()),
             reflection_service,
             editor_fn,
             active_tab: Tab::TodoList,
@@ -69,18 +69,7 @@ impl App {
     pub async fn init(&mut self) -> Result<()> {
         self.todo_list_view.init().await?;
         self.meetings_view.init().await?;
-        self.load_reflections().await?;
-        Ok(())
-    }
-
-    async fn load_reflections(&mut self) -> Result<()> {
-        let reflections = self.reflection_service.list_reflections().await?;
-        let mut labels = Vec::with_capacity(reflections.len());
-        for reflection in &reflections {
-            labels.push(self.reflection_service.resolve_label(reflection).await?);
-        }
-        self.reflections_view
-            .set_items_with_labels(reflections, labels);
+        self.reflections_view.init().await?;
         Ok(())
     }
 
@@ -109,19 +98,16 @@ impl App {
         }
 
         if !self.is_modal_active() && key.code == KeyCode::Char('R') {
-            let reflection = self.reflection_service.create_reflection(None).await?;
-            let path = self.reflection_service.full_path(&reflection.file_path);
-            if let Err(e) = (self.editor_fn)(&path) {
-                self.reflection_service
-                    .cleanup_reflection(reflection.id)
-                    .await?;
-                return Err(e);
+            let needs_clear = crate::tui::editor::create_and_edit_reflection(
+                &mut self.reflection_service,
+                &self.editor_fn,
+                None,
+            )
+            .await?;
+            if needs_clear {
+                self.reflections_view.refresh().await?;
             }
-            self.reflection_service
-                .cleanup_reflection(reflection.id)
-                .await?;
-            self.load_reflections().await?;
-            return Ok(true);
+            return Ok(needs_clear);
         }
 
         let needs_clear = match self.active_tab {
@@ -130,7 +116,7 @@ impl App {
             Tab::Reflections => self.reflections_view.handle_key(key).await?,
         };
         if needs_clear {
-            self.load_reflections().await?;
+            self.reflections_view.refresh().await?;
         }
         Ok(needs_clear)
     }

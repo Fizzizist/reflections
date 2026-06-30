@@ -71,21 +71,17 @@ impl ReflectionService {
         repositories::reflection::list_ordered_by_updated_at(&self.conn).await
     }
 
-    pub async fn resolve_label(&mut self, reflection: &Reflection) -> Result<String> {
+    pub async fn resolve_label(&self, reflection: &Reflection) -> Result<String> {
         match reflection.about_id {
             None => Ok(format!(
                 "General Reflection {}",
                 reflection.created_at.format("%Y-%m-%d %H:%M")
             )),
             Some(id) => {
-                if let Some(item) =
-                    repositories::todo_item::get_by_id(&self.conn.transaction().await?, id)
-                        .await
-                        .ok()
-                {
+                if let Some(item) = repositories::todo_item::find_by_id(&self.conn, id).await? {
                     return Ok(format!("TODO Item Reflection {}", item.label));
                 }
-                if let Some(meeting) = repositories::meeting::get_by_id(&self.conn, id).await.ok() {
+                if let Some(meeting) = repositories::meeting::find_by_id(&self.conn, id).await? {
                     return Ok(format!("Meeting Reflection {}", meeting.name));
                 }
                 Ok(format!(
