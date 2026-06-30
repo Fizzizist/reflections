@@ -17,7 +17,6 @@ async fn main() -> Result<()> {
     let conn = db.connect()?;
 
     schema::init_schema(&conn).await?;
-    schema::run_migrations(&conn).await?;
 
     let root_dir = std::env::current_dir()?;
     tui_run(conn, root_dir).await

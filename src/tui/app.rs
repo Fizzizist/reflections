@@ -292,18 +292,8 @@ mod tests {
         schema::init_schema(&conn)
             .await
             .expect("schema init failed");
-        let conn2 = db.connect().expect("trouble connecting to the db");
-        let conn3 = db.connect().expect("trouble connecting to the db");
-        let conn4 = db.connect().expect("trouble connecting to the db");
-        let conn5 = db.connect().expect("trouble connecting to the db");
         let root_dir = tempfile::tempdir().expect("create tempdir failed").keep();
-        App::new(
-            TodoService::new(conn),
-            MeetingService::new(conn2),
-            ReflectionService::new(conn3, root_dir.clone()),
-            ReflectionService::new(conn4, root_dir.clone()),
-            ReflectionService::new(conn5, root_dir),
-        )
+        App::new(conn, root_dir)
     }
 
     fn fixed_item(label: &str) -> TodoItem {

@@ -71,39 +71,23 @@ impl ReflectionService {
         repositories::reflection::list_ordered_by_updated_at(&self.conn).await
     }
 
-    pub async fn resolve_label(&self, reflection: &Reflection) -> Result<String> {
+    pub async fn resolve_label(&mut self, reflection: &Reflection) -> Result<String> {
         match reflection.about_id {
             None => Ok(format!(
                 "General Reflection {}",
                 reflection.created_at.format("%Y-%m-%d %H:%M")
             )),
             Some(id) => {
-                let mut rows = self
-                    .conn
-                    .query(
-                        "SELECT label FROM todo_item WHERE todo_item_id = ?",
-                        [id.to_string()],
-                    )
-                    .await?;
-
-                if let Some(row) = rows.next().await? {
-                    let label: String = row.get(0)?;
-                    return Ok(format!("TODO Item Reflection {}", label));
+                if let Some(item) =
+                    repositories::todo_item::get_by_id(&self.conn.transaction().await?, id)
+                        .await
+                        .ok()
+                {
+                    return Ok(format!("TODO Item Reflection {}", item.label));
                 }
-
-                let mut rows = self
-                    .conn
-                    .query(
-                        "SELECT name FROM meeting WHERE meeting_id = ?",
-                        [id.to_string()],
-                    )
-                    .await?;
-
-                if let Some(row) = rows.next().await? {
-                    let name: String = row.get(0)?;
-                    return Ok(format!("Meeting Reflection {}", name));
+                if let Some(meeting) = repositories::meeting::get_by_id(&self.conn, id).await.ok() {
+                    return Ok(format!("Meeting Reflection {}", meeting.name));
                 }
-
                 Ok(format!(
                     "General Reflection {}",
                     reflection.created_at.format("%Y-%m-%d %H:%M")
