@@ -96,6 +96,26 @@ pub async fn init_schema(conn: &Connection) -> Result<()> {
 pub async fn run_migrations(conn: &Connection) -> Result<()> {
     conn.execute_batch("CREATE TABLE IF NOT EXISTS schema_versions (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)").await?;
 
+    let mut rows = conn
+        .query("SELECT COUNT(*) FROM schema_versions", ())
+        .await?;
+    let row = rows.next().await?.expect("schema_versions count row");
+    let count: i64 = *row
+        .get_value(0)
+        .expect("count value")
+        .as_integer()
+        .expect("expected integer");
+    drop(rows);
+
+    if count == 0 && meeting_has_scheduled_at(conn).await? {
+        // Fresh database: init_schema already created tables with current DDL.
+        // All migrations are baked in — record them as applied and skip.
+        for (version, _) in MIGRATIONS {
+            record_migration(conn, *version).await?;
+        }
+        return Ok(());
+    }
+
     for (version, sql) in MIGRATIONS {
         let mut rows = conn
             .query(
@@ -107,29 +127,33 @@ pub async fn run_migrations(conn: &Connection) -> Result<()> {
         drop(rows);
 
         if !already_applied {
-            match conn.execute_batch(sql).await {
-                Ok(()) => {}
-                Err(e) => {
-                    let err_msg = e.to_string().to_lowercase();
-                    if err_msg.contains("duplicate column name") {
-                        // Column already exists (e.g., from fresh install with updated schema)
-                    } else if err_msg.contains("no such table") {
-                        // Table already migrated or doesn't exist in this DB state
-                    } else {
-                        return Err(e.into());
-                    }
-                }
-            }
-            let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-            let mut rows = conn
-                .query(
-                    "INSERT INTO schema_versions (version, applied_at) VALUES (?, ?)",
-                    (*version, now),
-                )
-                .await?;
-            while rows.next().await.is_ok_and(|r| r.is_some()) {}
+            conn.execute_batch(sql).await?;
+            record_migration(conn, *version).await?;
         }
     }
+    Ok(())
+}
+
+async fn meeting_has_scheduled_at(conn: &Connection) -> Result<bool> {
+    let mut rows = conn.query("PRAGMA table_info(meeting)", ()).await?;
+    while let Some(row) = rows.next().await? {
+        let name: String = row.get(1)?;
+        if name == "scheduled_at" {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+async fn record_migration(conn: &Connection, version: i64) -> Result<()> {
+    let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let mut rows = conn
+        .query(
+            "INSERT INTO schema_versions (version, applied_at) VALUES (?, ?)",
+            (version, now),
+        )
+        .await?;
+    while rows.next().await.is_ok_and(|r| r.is_some()) {}
     Ok(())
 }
 
@@ -196,6 +220,14 @@ mod tests {
 CREATE TABLE IF NOT EXISTS meeting (
     meeting_id uuid PRIMARY KEY,
     name text NOT NULL,
+    created_at timestamp NOT NULL,
+    updated_at timestamp NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS reflection (
+    reflection_id uuid PRIMARY KEY,
+    about_id uuid NOT NULL,
+    file_path text NOT NULL,
     created_at timestamp NOT NULL,
     updated_at timestamp NOT NULL
 ) STRICT;
@@ -295,7 +327,15 @@ CREATE TABLE IF NOT EXISTS meeting (
     async fn migration_makes_about_id_nullable() {
         let conn = test_conn().await;
 
-        let old_reflection_schema = "
+        let old_schema = "
+CREATE TABLE IF NOT EXISTS meeting (
+    meeting_id uuid PRIMARY KEY,
+    name text NOT NULL,
+    scheduled_at timestamp NOT NULL,
+    created_at timestamp NOT NULL,
+    updated_at timestamp NOT NULL
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS reflection (
     reflection_id uuid PRIMARY KEY,
     about_id uuid NOT NULL,
@@ -304,9 +344,20 @@ CREATE TABLE IF NOT EXISTS reflection (
     updated_at timestamp NOT NULL
 ) STRICT;
 ";
-        conn.execute_batch(old_reflection_schema)
+        conn.execute_batch(old_schema)
             .await
-            .expect("failed to create old reflection schema");
+            .expect("failed to create old schema");
+
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS schema_versions (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)",
+        )
+        .await
+        .expect("create schema_versions");
+
+        // Migration 1 already applied in this old DB
+        record_migration(&conn, 1)
+            .await
+            .expect("record migration 1");
 
         conn.execute_batch(
             "INSERT INTO reflection (reflection_id, about_id, file_path, created_at, updated_at) VALUES ('019598a0-0000-7000-8000-000000000001', '019598a0-0000-7000-8000-000000000002', '2024/01/15/test.md', '2024-01-15T10:30:00Z', '2024-01-15T10:30:00Z')",

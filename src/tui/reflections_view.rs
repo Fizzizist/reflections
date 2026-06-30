@@ -37,7 +37,7 @@ impl ReflectionsView {
         }
     }
 
-    pub async fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
+    pub async fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
         match key.code {
             KeyCode::Char('j') | KeyCode::Down if !self.items.is_empty() => {
                 let max = self.items.len().saturating_sub(1);
@@ -57,7 +57,7 @@ impl ReflectionsView {
             _ => {}
         }
 
-        Ok(())
+        Ok(false)
     }
 
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {

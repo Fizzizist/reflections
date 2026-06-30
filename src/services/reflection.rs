@@ -9,6 +9,7 @@ use crate::models::event::EventType;
 use crate::models::reflection::Reflection;
 use crate::repositories;
 
+#[derive(Clone)]
 pub struct ReflectionService {
     conn: Connection,
     root_dir: PathBuf,

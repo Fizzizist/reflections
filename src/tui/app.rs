@@ -1,6 +1,7 @@
 use crate::services::meeting::MeetingService;
 use crate::services::reflection::ReflectionService;
 use crate::services::todo::TodoService;
+use crate::tui::editor::EditorFn;
 
 use super::meetings_view::MeetingsView;
 use super::reflections_view::ReflectionsView;
@@ -8,7 +9,7 @@ use super::todo_list::TodoListView;
 use anyhow::Result;
 use futures::stream::StreamExt;
 use std::io;
-use std::path::Path;
+use std::path::PathBuf;
 
 use crossterm::event::{
     DisableBracketedPaste, EnableBracketedPaste, Event, EventStream, KeyCode, KeyEvent,
@@ -30,8 +31,6 @@ enum Tab {
 
 const TABS: [Tab; 3] = [Tab::TodoList, Tab::Meetings, Tab::Reflections];
 
-type EditorFn = Box<dyn Fn(&Path) -> Result<()>>;
-
 pub struct App {
     todo_list_view: TodoListView,
     meetings_view: MeetingsView,
@@ -40,24 +39,30 @@ pub struct App {
     editor_fn: EditorFn,
     active_tab: Tab,
     pending_g_prefix: bool,
-    needs_clear: bool,
 }
 
 impl App {
-    pub fn new(
-        todo_service: TodoService,
-        meeting_service: MeetingService,
-        reflection_service: ReflectionService,
-    ) -> Self {
+    pub fn new(conn: turso::Connection, root_dir: PathBuf) -> Self {
+        let editor_fn = crate::tui::editor::default_editor_fn();
+        let todo_service = TodoService::new(conn.clone());
+        let meeting_service = MeetingService::new(conn.clone());
+        let reflection_service = ReflectionService::new(conn, root_dir);
         Self {
-            todo_list_view: TodoListView::new(todo_service),
-            meetings_view: MeetingsView::new(meeting_service),
+            todo_list_view: TodoListView::new(
+                todo_service,
+                reflection_service.clone(),
+                crate::tui::editor::default_editor_fn(),
+            ),
+            meetings_view: MeetingsView::new(
+                meeting_service,
+                reflection_service.clone(),
+                crate::tui::editor::default_editor_fn(),
+            ),
             reflections_view: ReflectionsView::new(),
             reflection_service,
-            editor_fn: Box::new(crate::tui::editor::open_editor),
+            editor_fn,
             active_tab: Tab::TodoList,
             pending_g_prefix: false,
-            needs_clear: false,
         }
     }
 
@@ -79,18 +84,18 @@ impl App {
         Ok(())
     }
 
-    pub async fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
+    pub async fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
         if self.pending_g_prefix {
             match key.code {
                 KeyCode::Char('t') => {
                     self.active_tab = self.next_tab();
                     self.pending_g_prefix = false;
-                    return Ok(());
+                    return Ok(false);
                 }
                 KeyCode::Char('T') => {
                     self.active_tab = self.prev_tab();
                     self.pending_g_prefix = false;
-                    return Ok(());
+                    return Ok(false);
                 }
                 _ => {
                     self.pending_g_prefix = false;
@@ -100,60 +105,34 @@ impl App {
 
         if key.code == KeyCode::Char('g') && !self.is_modal_active() {
             self.pending_g_prefix = true;
-            return Ok(());
+            return Ok(false);
         }
 
-        if !self.is_modal_active() {
-            if key.code == KeyCode::Char('R') {
-                let reflection = self.reflection_service.create_reflection(None).await?;
-                let path = self.reflection_service.full_path(&reflection.file_path);
-                if let Err(e) = (self.editor_fn)(&path) {
-                    self.reflection_service
-                        .cleanup_reflection(reflection.id)
-                        .await?;
-                    return Err(e);
-                }
+        if !self.is_modal_active() && key.code == KeyCode::Char('R') {
+            let reflection = self.reflection_service.create_reflection(None).await?;
+            let path = self.reflection_service.full_path(&reflection.file_path);
+            if let Err(e) = (self.editor_fn)(&path) {
                 self.reflection_service
                     .cleanup_reflection(reflection.id)
                     .await?;
-                self.load_reflections().await?;
-                self.needs_clear = true;
-                return Ok(());
+                return Err(e);
             }
-
-            if key.code == KeyCode::Char('r')
-                && matches!(self.active_tab, Tab::TodoList | Tab::Meetings)
-            {
-                let about_id = match self.active_tab {
-                    Tab::TodoList => self.todo_list_view.selected_item_id(),
-                    Tab::Meetings => self.meetings_view.selected_item_id(),
-                    _ => None,
-                };
-                if let Some(id) = about_id {
-                    let reflection = self.reflection_service.create_reflection(Some(id)).await?;
-                    let path = self.reflection_service.full_path(&reflection.file_path);
-                    if let Err(e) = (self.editor_fn)(&path) {
-                        self.reflection_service
-                            .cleanup_reflection(reflection.id)
-                            .await?;
-                        return Err(e);
-                    }
-                    self.reflection_service
-                        .cleanup_reflection(reflection.id)
-                        .await?;
-                    self.load_reflections().await?;
-                    self.needs_clear = true;
-                }
-                return Ok(());
-            }
+            self.reflection_service
+                .cleanup_reflection(reflection.id)
+                .await?;
+            self.load_reflections().await?;
+            return Ok(true);
         }
 
-        match self.active_tab {
+        let needs_clear = match self.active_tab {
             Tab::TodoList => self.todo_list_view.handle_key(key).await?,
             Tab::Meetings => self.meetings_view.handle_key(key).await?,
             Tab::Reflections => self.reflections_view.handle_key(key).await?,
+        };
+        if needs_clear {
+            self.load_reflections().await?;
         }
-        Ok(())
+        Ok(needs_clear)
     }
 
     fn next_tab(&self) -> Tab {
@@ -177,8 +156,16 @@ impl App {
 
 #[cfg(test)]
 impl App {
-    pub fn set_editor_fn(&mut self, f: EditorFn) {
+    pub fn set_app_editor_fn(&mut self, f: EditorFn) {
         self.editor_fn = f;
+    }
+
+    pub fn set_todo_editor_fn(&mut self, f: EditorFn) {
+        self.todo_list_view.set_editor_fn(f);
+    }
+
+    pub fn set_meeting_editor_fn(&mut self, f: EditorFn) {
+        self.meetings_view.set_editor_fn(f);
     }
 }
 
@@ -215,11 +202,10 @@ fn is_global_quit(key: &KeyEvent) -> bool {
 
 async fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    todo_service: TodoService,
-    meeting_service: MeetingService,
-    reflection_service: ReflectionService,
+    conn: turso::Connection,
+    root_dir: PathBuf,
 ) -> Result<()> {
-    let mut app = App::new(todo_service, meeting_service, reflection_service);
+    let mut app = App::new(conn, root_dir);
     app.init().await?;
     terminal.draw(|frame| render_app(&mut app, frame))?;
 
@@ -233,10 +219,9 @@ async fn run_app(
                             if is_global_quit(&key) {
                                 break;
                             }
-                            app.handle_key(key).await?;
-                            if app.needs_clear {
+                            let needs_clear = app.handle_key(key).await?;
+                            if needs_clear {
                                 terminal.clear()?;
-                                app.needs_clear = false;
                             }
                             terminal.draw(|frame| render_app(&mut app, frame))?;
                         }
@@ -255,23 +240,13 @@ async fn run_app(
     Ok(())
 }
 
-pub async fn run(
-    todo_service: TodoService,
-    meeting_service: MeetingService,
-    reflection_service: ReflectionService,
-) -> Result<()> {
+pub async fn run(conn: turso::Connection, root_dir: PathBuf) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    let result = run_app(
-        &mut terminal,
-        todo_service,
-        meeting_service,
-        reflection_service,
-    )
-    .await;
+    let result = run_app(&mut terminal, conn, root_dir).await;
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -319,11 +294,15 @@ mod tests {
             .expect("schema init failed");
         let conn2 = db.connect().expect("trouble connecting to the db");
         let conn3 = db.connect().expect("trouble connecting to the db");
+        let conn4 = db.connect().expect("trouble connecting to the db");
+        let conn5 = db.connect().expect("trouble connecting to the db");
         let root_dir = tempfile::tempdir().expect("create tempdir failed").keep();
         App::new(
             TodoService::new(conn),
             MeetingService::new(conn2),
-            ReflectionService::new(conn3, root_dir),
+            ReflectionService::new(conn3, root_dir.clone()),
+            ReflectionService::new(conn4, root_dir.clone()),
+            ReflectionService::new(conn5, root_dir),
         )
     }
 
@@ -351,6 +330,17 @@ mod tests {
             created_at: fixed_time,
             updated_at: fixed_time,
         }
+    }
+
+    fn test_editor_fn() -> EditorFn {
+        Box::new(|path: &std::path::Path| {
+            std::fs::write(path, "test reflection content")?;
+            Ok(())
+        })
+    }
+
+    fn noop_editor_fn() -> EditorFn {
+        Box::new(|_path: &std::path::Path| Ok(()))
     }
 
     #[tokio::test]
@@ -786,11 +776,7 @@ mod tests {
 
         app.todo_list_view.set_items(vec![fixed_item("test item")]);
         app.todo_list_view.set_selected_index(0);
-
-        app.set_editor_fn(Box::new(|path: &std::path::Path| {
-            std::fs::write(path, "test reflection content")?;
-            Ok(())
-        }));
+        app.set_todo_editor_fn(test_editor_fn());
 
         let key_r = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE);
         app.handle_key(key_r).await.expect("handle_key failed");
@@ -809,10 +795,7 @@ mod tests {
         let mut app = test_app().await;
         app.init().await.expect("init failed");
 
-        app.set_editor_fn(Box::new(|path: &std::path::Path| {
-            std::fs::write(path, "general reflection")?;
-            Ok(())
-        }));
+        app.set_app_editor_fn(test_editor_fn());
 
         let key_r = KeyEvent::new(KeyCode::Char('R'), KeyModifiers::NONE);
         app.handle_key(key_r).await.expect("handle_key failed");
@@ -833,11 +816,7 @@ mod tests {
         app.active_tab = Tab::Meetings;
         app.meetings_view.set_items(vec![fixed_meeting("Standup")]);
         app.meetings_view.set_selected_index(0);
-
-        app.set_editor_fn(Box::new(|path: &std::path::Path| {
-            std::fs::write(path, "meeting reflection content")?;
-            Ok(())
-        }));
+        app.set_meeting_editor_fn(test_editor_fn());
 
         let key_r = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE);
         app.handle_key(key_r).await.expect("handle_key failed");
@@ -873,9 +852,29 @@ mod tests {
         let mut app = test_app().await;
         app.init().await.expect("init failed");
 
-        app.set_editor_fn(Box::new(|_path: &std::path::Path| Ok(())));
+        app.set_app_editor_fn(noop_editor_fn());
 
         let key_r = KeyEvent::new(KeyCode::Char('R'), KeyModifiers::NONE);
+        app.handle_key(key_r).await.expect("handle_key failed");
+
+        let reflections = app
+            .reflection_service
+            .list_reflections()
+            .await
+            .expect("list failed");
+        assert_eq!(reflections.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn empty_editor_exit_on_todo_cleans_up_reflection() {
+        let mut app = test_app().await;
+        app.init().await.expect("init failed");
+
+        app.todo_list_view.set_items(vec![fixed_item("test item")]);
+        app.todo_list_view.set_selected_index(0);
+        app.set_todo_editor_fn(noop_editor_fn());
+
+        let key_r = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE);
         app.handle_key(key_r).await.expect("handle_key failed");
 
         let reflections = app
