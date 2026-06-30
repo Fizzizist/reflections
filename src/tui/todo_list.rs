@@ -1,6 +1,8 @@
 use super::splash;
 use crate::models::todo_item::{TodoItem, TodoStatus};
+use crate::services::reflection::ReflectionService;
 use crate::services::todo::TodoService;
+use crate::tui::editor::EditorFn;
 use crate::tui::input_modal::InputModal;
 use crate::tui::status_modal::StatusModal;
 use anyhow::Result;
@@ -20,10 +22,16 @@ pub struct TodoListView {
     selected_index: Option<usize>,
     show_all: bool,
     status_modal: StatusModal,
+    reflection_service: ReflectionService,
+    editor_fn: EditorFn,
 }
 
 impl TodoListView {
-    pub fn new(service: TodoService) -> Self {
+    pub fn new(
+        service: TodoService,
+        reflection_service: ReflectionService,
+        editor_fn: EditorFn,
+    ) -> Self {
         Self {
             items: Vec::new(),
             service,
@@ -31,6 +39,8 @@ impl TodoListView {
             selected_index: None,
             show_all: false,
             status_modal: StatusModal::new(),
+            reflection_service,
+            editor_fn,
         }
     }
 
@@ -50,7 +60,7 @@ impl TodoListView {
         }
     }
 
-    pub async fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
+    pub async fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
         if self.status_modal.is_active() {
             if let Some(status) = self.status_modal.handle_key(key) {
                 if let Some(id) = self.status_modal.target_item_id() {
@@ -60,7 +70,7 @@ impl TodoListView {
                 }
                 self.status_modal.close();
             }
-            return Ok(());
+            return Ok(false);
         }
 
         if self.input_modal.is_active() {
@@ -71,7 +81,7 @@ impl TodoListView {
                 }
                 self.input_modal.close();
             }
-            return Ok(());
+            return Ok(false);
         }
 
         match key.code {
@@ -104,10 +114,21 @@ impl TodoListView {
                 self.load_items().await?;
                 self.clamp_selected_index();
             }
+            KeyCode::Char('r')
+                if let Some(idx) = self.selected_index
+                    && let Some(item) = self.items.get(idx) =>
+            {
+                return super::editor::create_and_edit_reflection(
+                    &mut self.reflection_service,
+                    &self.editor_fn,
+                    Some(item.id),
+                )
+                .await;
+            }
             _ => {}
         }
 
-        Ok(())
+        Ok(false)
     }
 
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
@@ -238,5 +259,9 @@ impl TodoListView {
 
     pub fn clamp_selected_index_for_test(&mut self) {
         self.clamp_selected_index();
+    }
+
+    pub fn set_editor_fn(&mut self, f: EditorFn) {
+        self.editor_fn = f;
     }
 }

@@ -78,6 +78,17 @@ pub async fn list_by_date(
     Ok(meetings)
 }
 
+pub async fn find_by_id(conn: &Connection, id: Uuid) -> Result<Option<Meeting>> {
+    let sql = "SELECT meeting_id, name, scheduled_at, created_at, updated_at FROM meeting WHERE meeting_id = ?";
+    let mut rows = conn.query(sql, (id.to_string(),)).await?;
+    let row = rows.next().await?;
+    while rows.next().await.is_ok_and(|r| r.is_some()) {}
+    if let Some(row) = row {
+        return Ok(Some(row_to_meeting(&row)?));
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

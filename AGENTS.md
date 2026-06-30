@@ -51,18 +51,23 @@ the `schema` module and are applied at startup.
 ### Models
 
 The `models` module defines plain domain structs and their associated enums (e.g. `TodoItem`,
-`TodoStatus`, `Meeting`, `Event`, `EventType`). Models are the in-memory representation of database rows
+`TodoStatus`, `Meeting`, `Event`, `EventType`, `Reflection`). Models are the in-memory representation of database rows
 and carry no business logic themselves. Repositories translate between these model structs and
 the database tables.
 
 ### TUI
 
 Inside the `tui` module is all of the ratatui widgets for display. The root struct is App, which
-is fed a list of services in order to enact application logic. No application logic lives inside
-the tui, it is just built to display. Any action performed by a user in the TUI is routed to a
-service to actually enact it. The `tui` module includes reusable sub-components such as
-`InputBox` (text input with cursor, character filtering, and max length) and modal widgets
-(`InputModal`, `MeetingModal`, `StatusModal`).
+takes a single Turso connection and a root directory path. It clones the connection internally to
+construct all services. No application logic lives inside the tui, it is just built to display. Any
+action performed by a user in the TUI is routed to a service to actually enact it. The `tui` module
+includes reusable sub-components such as `InputBox` (text input with cursor, character filtering,
+and max length), modal widgets (`InputModal`, `MeetingModal`, `StatusModal`), the `editor` module
+(spawning `$EDITOR` on reflection files, suspending and restoring the terminal), and
+`ReflectionsView` (listing reflections with resolved labels). Views that can create reflections
+(`TodoListView`, `MeetingsView`) own their own `ReflectionService` clone and `EditorFn`. The shared
+`create_and_edit_reflection` function in `editor.rs` orchestrates the create→edit→cleanup workflow
+used by the `r` key in views and the `R` key in App.
 
 ### CLI
 
@@ -86,8 +91,6 @@ repository module for an entity should contain the SQL statements that get sent 
 ### Schema
 
 The `schema` module contains all DDL statements (`CREATE TABLE IF NOT EXISTS ...`) and exposes
-an `init_schema` function that is called at startup to ensure the database schema exists. It also
-exposes a `run_migrations` function for applying `ALTER TABLE` migrations to existing databases,
-tracked via a `schema_versions` table. All table definitions and migrations are centralized here;
-repositories should not create or alter tables.
+an `init_schema` function that is called at startup to ensure the database schema exists. All table
+definitions are centralized here; repositories should not create or alter tables.
 

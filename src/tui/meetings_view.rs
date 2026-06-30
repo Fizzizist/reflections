@@ -1,6 +1,8 @@
 use super::meeting_modal::MeetingModal;
 use crate::models::meeting::Meeting;
 use crate::services::meeting::MeetingService;
+use crate::services::reflection::ReflectionService;
+use crate::tui::editor::EditorFn;
 use anyhow::Result;
 use chrono::Local;
 use crossterm::event::{KeyCode, KeyEvent};
@@ -16,15 +18,23 @@ pub struct MeetingsView {
     service: MeetingService,
     meeting_modal: MeetingModal,
     selected_index: Option<usize>,
+    reflection_service: ReflectionService,
+    editor_fn: EditorFn,
 }
 
 impl MeetingsView {
-    pub fn new(service: MeetingService) -> Self {
+    pub fn new(
+        service: MeetingService,
+        reflection_service: ReflectionService,
+        editor_fn: EditorFn,
+    ) -> Self {
         Self {
             items: Vec::new(),
             service,
             meeting_modal: MeetingModal::new(),
             selected_index: None,
+            reflection_service,
+            editor_fn,
         }
     }
 
@@ -44,18 +54,18 @@ impl MeetingsView {
         }
     }
 
-    pub async fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
+    pub async fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
         if self.meeting_modal.is_active() {
             if let Some((name, scheduled_at)) = self.meeting_modal.handle_key(key) {
                 if let Err(e) = self.service.create_meeting(&name, scheduled_at).await {
                     drop(e);
                     self.meeting_modal.close();
-                    return Ok(());
+                    return Ok(false);
                 }
                 self.load_items().await?;
                 self.clamp_selected_index();
             }
-            return Ok(());
+            return Ok(false);
         }
 
         match key.code {
@@ -77,10 +87,21 @@ impl MeetingsView {
             KeyCode::Char('a') => {
                 self.meeting_modal.open();
             }
+            KeyCode::Char('r')
+                if let Some(idx) = self.selected_index
+                    && let Some(item) = self.items.get(idx) =>
+            {
+                return super::editor::create_and_edit_reflection(
+                    &mut self.reflection_service,
+                    &self.editor_fn,
+                    Some(item.id),
+                )
+                .await;
+            }
             _ => {}
         }
 
-        Ok(())
+        Ok(false)
     }
 
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
@@ -188,5 +209,9 @@ impl MeetingsView {
 
     pub fn clamp_selected_index_for_test(&mut self) {
         self.clamp_selected_index();
+    }
+
+    pub fn set_editor_fn(&mut self, f: EditorFn) {
+        self.editor_fn = f;
     }
 }
