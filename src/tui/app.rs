@@ -898,15 +898,17 @@ mod tests {
         let mut app = test_app().await;
         app.init().await.expect("init failed");
 
-        app.todo_list_view.set_items(vec![fixed_item("test item")]);
+        let item = fixed_item("test item");
+        app.todo_list_view.set_items(vec![item.clone()]);
         app.todo_list_view.set_selected_index(0);
         app.set_todo_note_editor_fn(test_editor_fn());
 
         let key_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
         app.handle_key(key_n).await.expect("handle_key failed");
 
-        let note_count = app.note_service.note_count().await;
-        assert_eq!(note_count, 1);
+        let notes = app.note_service.list_notes_for_test().await;
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].related_to_id, Some(item.id));
     }
 
     #[tokio::test]
@@ -914,15 +916,17 @@ mod tests {
         let mut app = test_app().await;
         app.init().await.expect("init failed");
         app.active_tab = Tab::Meetings;
-        app.meetings_view.set_items(vec![fixed_meeting("Standup")]);
+        let meeting = fixed_meeting("Standup");
+        app.meetings_view.set_items(vec![meeting.clone()]);
         app.meetings_view.set_selected_index(0);
         app.set_meeting_note_editor_fn(test_editor_fn());
 
         let key_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
         app.handle_key(key_n).await.expect("handle_key failed");
 
-        let note_count = app.note_service.note_count().await;
-        assert_eq!(note_count, 1);
+        let notes = app.note_service.list_notes_for_test().await;
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].related_to_id, Some(meeting.id));
     }
 
     #[tokio::test]

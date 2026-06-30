@@ -82,6 +82,39 @@ impl NoteService {
         while rows.next().await.expect("fetch failed").is_some() {}
         row.get(0).expect("get count failed")
     }
+
+    #[cfg(test)]
+    pub async fn list_notes_for_test(&self) -> Vec<Note> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT note_id, related_to_id, file_path FROM note ORDER BY created_at",
+                (),
+            )
+            .await
+            .expect("query failed");
+        let mut notes = Vec::new();
+        while let Some(row) = rows.next().await.expect("fetch failed") {
+            let id_str: String = row.get(0).expect("get id failed");
+            let id = Uuid::parse_str(&id_str).expect("parse id failed");
+            let file_path: String = row.get(2).expect("get file_path failed");
+            let related_to_id = match row.get_value(1).expect("get related_to_id failed") {
+                turso::Value::Text(s) => {
+                    Some(Uuid::parse_str(&s).expect("parse related_to_id failed"))
+                }
+                turso::Value::Null => None,
+                _ => None,
+            };
+            notes.push(Note {
+                id,
+                related_to_id,
+                file_path,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            });
+        }
+        notes
+    }
 }
 
 impl EditableEntity for NoteService {
@@ -171,6 +204,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_note_with_related_to_id() {
+        let (mut svc, _root_dir) = setup().await;
+
+        let related_id = Uuid::now_v7();
+        let note = svc
+            .create_note(Some(related_id))
+            .await
+            .expect("create failed");
+
+        assert_eq!(note.related_to_id, Some(related_id));
+    }
+
+    #[tokio::test]
     async fn create_note_creates_directory() {
         let (mut svc, root_dir) = setup().await;
 
@@ -226,5 +272,23 @@ mod tests {
 
         let content = fs::read_to_string(&full_path).await.expect("read failed");
         assert_eq!(content, "note content");
+    }
+
+    #[tokio::test]
+    async fn cleanup_note_succeeds_when_file_missing() {
+        let (mut svc, root_dir) = setup().await;
+
+        let note = svc.create_note(None).await.expect("create failed");
+
+        let full_path = root_dir.join(&note.file_path);
+        fs::remove_file(&full_path)
+            .await
+            .expect("remove file failed");
+
+        svc.cleanup_note(note.id)
+            .await
+            .expect("cleanup should succeed when file is missing");
+
+        assert_eq!(note_count(&svc).await, 0);
     }
 }
