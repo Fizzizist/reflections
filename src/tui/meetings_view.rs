@@ -1,6 +1,7 @@
 use super::meeting_modal::MeetingModal;
 use crate::models::meeting::Meeting;
 use crate::services::meeting::MeetingService;
+use crate::services::note::NoteService;
 use crate::services::reflection::ReflectionService;
 use crate::tui::editor::EditorFn;
 use anyhow::Result;
@@ -20,6 +21,8 @@ pub struct MeetingsView {
     selected_index: Option<usize>,
     reflection_service: ReflectionService,
     editor_fn: EditorFn,
+    note_service: NoteService,
+    note_editor_fn: EditorFn,
 }
 
 impl MeetingsView {
@@ -27,6 +30,8 @@ impl MeetingsView {
         service: MeetingService,
         reflection_service: ReflectionService,
         editor_fn: EditorFn,
+        note_service: NoteService,
+        note_editor_fn: EditorFn,
     ) -> Self {
         Self {
             items: Vec::new(),
@@ -35,6 +40,8 @@ impl MeetingsView {
             selected_index: None,
             reflection_service,
             editor_fn,
+            note_service,
+            note_editor_fn,
         }
     }
 
@@ -94,6 +101,17 @@ impl MeetingsView {
                 return super::editor::create_and_edit_reflection(
                     &mut self.reflection_service,
                     &self.editor_fn,
+                    Some(item.id),
+                )
+                .await;
+            }
+            KeyCode::Char('n')
+                if let Some(idx) = self.selected_index
+                    && let Some(item) = self.items.get(idx) =>
+            {
+                return super::editor::create_and_edit(
+                    &mut self.note_service,
+                    &self.note_editor_fn,
                     Some(item.id),
                 )
                 .await;
@@ -213,5 +231,9 @@ impl MeetingsView {
 
     pub fn set_editor_fn(&mut self, f: EditorFn) {
         self.editor_fn = f;
+    }
+
+    pub fn set_note_editor_fn(&mut self, f: EditorFn) {
+        self.note_editor_fn = f;
     }
 }

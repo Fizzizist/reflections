@@ -1,5 +1,6 @@
 use super::splash;
 use crate::models::todo_item::{TodoItem, TodoStatus};
+use crate::services::note::NoteService;
 use crate::services::reflection::ReflectionService;
 use crate::services::todo::TodoService;
 use crate::tui::editor::EditorFn;
@@ -24,6 +25,8 @@ pub struct TodoListView {
     status_modal: StatusModal,
     reflection_service: ReflectionService,
     editor_fn: EditorFn,
+    note_service: NoteService,
+    note_editor_fn: EditorFn,
 }
 
 impl TodoListView {
@@ -31,6 +34,8 @@ impl TodoListView {
         service: TodoService,
         reflection_service: ReflectionService,
         editor_fn: EditorFn,
+        note_service: NoteService,
+        note_editor_fn: EditorFn,
     ) -> Self {
         Self {
             items: Vec::new(),
@@ -41,6 +46,8 @@ impl TodoListView {
             status_modal: StatusModal::new(),
             reflection_service,
             editor_fn,
+            note_service,
+            note_editor_fn,
         }
     }
 
@@ -121,6 +128,17 @@ impl TodoListView {
                 return super::editor::create_and_edit_reflection(
                     &mut self.reflection_service,
                     &self.editor_fn,
+                    Some(item.id),
+                )
+                .await;
+            }
+            KeyCode::Char('n')
+                if let Some(idx) = self.selected_index
+                    && let Some(item) = self.items.get(idx) =>
+            {
+                return super::editor::create_and_edit(
+                    &mut self.note_service,
+                    &self.note_editor_fn,
                     Some(item.id),
                 )
                 .await;
@@ -263,5 +281,9 @@ impl TodoListView {
 
     pub fn set_editor_fn(&mut self, f: EditorFn) {
         self.editor_fn = f;
+    }
+
+    pub fn set_note_editor_fn(&mut self, f: EditorFn) {
+        self.note_editor_fn = f;
     }
 }

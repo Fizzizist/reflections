@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS meeting (
 
 CREATE TABLE IF NOT EXISTS note (
     note_id uuid PRIMARY KEY,
-    related_to_id uuid NOT NULL,
+    related_to_id uuid,
     file_path text NOT NULL,
     created_at timestamp NOT NULL,
     updated_at timestamp NOT NULL
