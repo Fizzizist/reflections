@@ -28,6 +28,12 @@ pub async fn insert(
     Ok(())
 }
 
+pub async fn delete_by_entity_id(tx: &Transaction<'_>, entity_id: Uuid) -> Result<()> {
+    let sql = "DELETE FROM event WHERE entity_id = ?";
+    tx.execute(sql, [entity_id.to_string()]).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -78,5 +84,53 @@ mod tests {
             .expect("expected text")
             .to_string();
         assert_eq!(event_type_str, "TODO_ITEM_CREATED");
+    }
+
+    #[tokio::test]
+    async fn delete_by_entity_id_removes_events() {
+        let mut conn = setup().await;
+        let entity_id = Uuid::now_v7();
+
+        let tx = conn.transaction().await.expect("tx begin failed");
+        insert(&tx, entity_id, &EventType::TodoItemCreated, "{}")
+            .await
+            .expect("insert failed");
+        delete_by_entity_id(&tx, entity_id)
+            .await
+            .expect("delete failed");
+        tx.commit().await.expect("commit failed");
+
+        let mut rows = conn
+            .query(
+                "SELECT COUNT(*) FROM event WHERE entity_id = ?",
+                [entity_id.to_string()],
+            )
+            .await
+            .expect("query failed");
+
+        let row = rows
+            .next()
+            .await
+            .expect("row fetch failed")
+            .expect("count row not found");
+
+        let count = *row
+            .get_value(0)
+            .expect("value extraction failed")
+            .as_integer()
+            .expect("expected integer");
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn delete_by_entity_id_noop_for_nonexistent() {
+        let mut conn = setup().await;
+        let nonexistent_id = Uuid::now_v7();
+
+        let tx = conn.transaction().await.expect("tx begin failed");
+        delete_by_entity_id(&tx, nonexistent_id)
+            .await
+            .expect("delete should not fail for nonexistent entity");
+        tx.commit().await.expect("commit failed");
     }
 }
