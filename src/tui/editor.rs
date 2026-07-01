@@ -12,10 +12,12 @@ use crossterm::execute;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use ratatui::crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
 
-pub type EditorFn = Box<dyn Fn(&Path) -> Result<()>>;
+use std::sync::Arc;
+
+pub type EditorFn = Arc<dyn Fn(&Path) -> Result<()>>;
 
 pub fn default_editor_fn() -> EditorFn {
-    Box::new(open_editor)
+    Arc::new(open_editor)
 }
 
 impl EditableEntityRecord for Reflection {

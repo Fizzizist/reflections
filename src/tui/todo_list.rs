@@ -26,7 +26,6 @@ pub struct TodoListView {
     reflection_service: ReflectionService,
     editor_fn: EditorFn,
     note_service: NoteService,
-    note_editor_fn: EditorFn,
 }
 
 impl TodoListView {
@@ -35,7 +34,6 @@ impl TodoListView {
         reflection_service: ReflectionService,
         editor_fn: EditorFn,
         note_service: NoteService,
-        note_editor_fn: EditorFn,
     ) -> Self {
         Self {
             items: Vec::new(),
@@ -47,7 +45,6 @@ impl TodoListView {
             reflection_service,
             editor_fn,
             note_service,
-            note_editor_fn,
         }
     }
 
@@ -138,7 +135,7 @@ impl TodoListView {
             {
                 return super::editor::create_and_edit(
                     &mut self.note_service,
-                    &self.note_editor_fn,
+                    &self.editor_fn,
                     Some(item.id),
                 )
                 .await;
@@ -281,9 +278,5 @@ impl TodoListView {
 
     pub fn set_editor_fn(&mut self, f: EditorFn) {
         self.editor_fn = f;
-    }
-
-    pub fn set_note_editor_fn(&mut self, f: EditorFn) {
-        self.note_editor_fn = f;
     }
 }

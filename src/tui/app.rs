@@ -39,7 +39,6 @@ pub struct App {
     reflection_service: ReflectionService,
     note_service: NoteService,
     editor_fn: EditorFn,
-    note_editor_fn: EditorFn,
     active_tab: Tab,
     pending_g_prefix: bool,
 }
@@ -47,7 +46,6 @@ pub struct App {
 impl App {
     pub fn new(conn: turso::Connection, root_dir: PathBuf) -> Self {
         let editor_fn = crate::tui::editor::default_editor_fn();
-        let note_editor_fn = crate::tui::editor::default_editor_fn();
         let todo_service = TodoService::new(conn.clone());
         let meeting_service = MeetingService::new(conn.clone());
         let note_service = NoteService::new(conn.clone(), root_dir.clone());
@@ -56,22 +54,19 @@ impl App {
             todo_list_view: TodoListView::new(
                 todo_service,
                 reflection_service.clone(),
-                crate::tui::editor::default_editor_fn(),
+                editor_fn.clone(),
                 note_service.clone(),
-                crate::tui::editor::default_editor_fn(),
             ),
             meetings_view: MeetingsView::new(
                 meeting_service,
                 reflection_service.clone(),
-                crate::tui::editor::default_editor_fn(),
+                editor_fn.clone(),
                 note_service.clone(),
-                crate::tui::editor::default_editor_fn(),
             ),
             reflections_view: ReflectionsView::new(reflection_service.clone()),
             reflection_service,
             note_service,
             editor_fn,
-            note_editor_fn,
             active_tab: Tab::TodoList,
             pending_g_prefix: false,
         }
@@ -124,7 +119,7 @@ impl App {
         if !self.is_modal_active() && key.code == KeyCode::Char('N') {
             return crate::tui::editor::create_and_edit(
                 &mut self.note_service,
-                &self.note_editor_fn,
+                &self.editor_fn,
                 None,
             )
             .await;
@@ -172,18 +167,6 @@ impl App {
 
     pub fn set_meeting_editor_fn(&mut self, f: EditorFn) {
         self.meetings_view.set_editor_fn(f);
-    }
-
-    pub fn set_app_note_editor_fn(&mut self, f: EditorFn) {
-        self.note_editor_fn = f;
-    }
-
-    pub fn set_todo_note_editor_fn(&mut self, f: EditorFn) {
-        self.todo_list_view.set_note_editor_fn(f);
-    }
-
-    pub fn set_meeting_note_editor_fn(&mut self, f: EditorFn) {
-        self.meetings_view.set_note_editor_fn(f);
     }
 }
 
@@ -278,6 +261,7 @@ pub async fn run(conn: turso::Connection, root_dir: PathBuf) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use ratatui::backend::TestBackend;
+    use std::sync::Arc;
     use turso::Builder;
 
     use super::*;
@@ -341,14 +325,14 @@ mod tests {
     }
 
     fn test_editor_fn() -> EditorFn {
-        Box::new(|path: &std::path::Path| {
+        Arc::new(|path: &std::path::Path| {
             std::fs::write(path, "test reflection content")?;
             Ok(())
         })
     }
 
     fn noop_editor_fn() -> EditorFn {
-        Box::new(|_path: &std::path::Path| Ok(()))
+        Arc::new(|_path: &std::path::Path| Ok(()))
     }
 
     #[tokio::test]
@@ -901,7 +885,7 @@ mod tests {
         let item = fixed_item("test item");
         app.todo_list_view.set_items(vec![item.clone()]);
         app.todo_list_view.set_selected_index(0);
-        app.set_todo_note_editor_fn(test_editor_fn());
+        app.set_todo_editor_fn(test_editor_fn());
 
         let key_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
         app.handle_key(key_n).await.expect("handle_key failed");
@@ -919,7 +903,7 @@ mod tests {
         let meeting = fixed_meeting("Standup");
         app.meetings_view.set_items(vec![meeting.clone()]);
         app.meetings_view.set_selected_index(0);
-        app.set_meeting_note_editor_fn(test_editor_fn());
+        app.set_meeting_editor_fn(test_editor_fn());
 
         let key_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
         app.handle_key(key_n).await.expect("handle_key failed");
@@ -934,7 +918,7 @@ mod tests {
         let mut app = test_app().await;
         app.init().await.expect("init failed");
 
-        app.set_app_note_editor_fn(test_editor_fn());
+        app.set_app_editor_fn(test_editor_fn());
 
         let key_n = KeyEvent::new(KeyCode::Char('N'), KeyModifiers::NONE);
         app.handle_key(key_n).await.expect("handle_key failed");
@@ -961,7 +945,7 @@ mod tests {
         let mut app = test_app().await;
         app.init().await.expect("init failed");
 
-        app.set_app_note_editor_fn(noop_editor_fn());
+        app.set_app_editor_fn(noop_editor_fn());
 
         let key_n = KeyEvent::new(KeyCode::Char('N'), KeyModifiers::NONE);
         app.handle_key(key_n).await.expect("handle_key failed");
@@ -977,7 +961,7 @@ mod tests {
 
         app.todo_list_view.set_items(vec![fixed_item("test item")]);
         app.todo_list_view.set_selected_index(0);
-        app.set_todo_note_editor_fn(noop_editor_fn());
+        app.set_todo_editor_fn(noop_editor_fn());
 
         let key_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
         app.handle_key(key_n).await.expect("handle_key failed");
