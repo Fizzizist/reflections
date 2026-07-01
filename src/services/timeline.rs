@@ -13,6 +13,7 @@ use crate::models::reflection::Reflection;
 use crate::models::summary::Summary;
 use crate::models::todo_item::TodoItem;
 use crate::repositories;
+use crate::services::editable::EditableEntityRecord;
 
 #[derive(Serialize)]
 pub struct TimelineEntry {
@@ -102,44 +103,49 @@ impl TimelineService {
             EventType::ReflectionCreated => {
                 let reflection =
                     repositories::reflection::find_by_id(&self.conn, event.entity_id).await?;
-                match reflection {
-                    Some(r) => {
-                        let content = self.read_file_content(&r.file_path).await;
-                        Ok(Some(TimelineEntity::Reflection(ReflectionWithContent {
+                Ok(self
+                    .attach_content(reflection, |r, content| {
+                        TimelineEntity::Reflection(ReflectionWithContent {
                             reflection: r,
                             content,
-                        })))
-                    }
-                    None => Ok(None),
-                }
+                        })
+                    })
+                    .await)
             }
             EventType::NoteCreated => {
                 let note = repositories::note::find_by_id(&self.conn, event.entity_id).await?;
-                match note {
-                    Some(n) => {
-                        let content = self.read_file_content(&n.file_path).await;
-                        Ok(Some(TimelineEntity::Note(NoteWithContent {
-                            note: n,
-                            content,
-                        })))
-                    }
-                    None => Ok(None),
-                }
+                Ok(self
+                    .attach_content(note, |n, content| {
+                        TimelineEntity::Note(NoteWithContent { note: n, content })
+                    })
+                    .await)
             }
             EventType::SummaryCreated => {
                 let summary =
                     repositories::summary::find_by_id(&self.conn, event.entity_id).await?;
-                match summary {
-                    Some(s) => {
-                        let content = self.read_file_content(&s.file_path).await;
-                        Ok(Some(TimelineEntity::Summary(SummaryWithContent {
+                Ok(self
+                    .attach_content(summary, |s, content| {
+                        TimelineEntity::Summary(SummaryWithContent {
                             summary: s,
                             content,
-                        })))
-                    }
-                    None => Ok(None),
-                }
+                        })
+                    })
+                    .await)
             }
+        }
+    }
+
+    async fn attach_content<T: EditableEntityRecord>(
+        &self,
+        entity: Option<T>,
+        wrap: impl Fn(T, Option<String>) -> TimelineEntity,
+    ) -> Option<TimelineEntity> {
+        match entity {
+            Some(e) => {
+                let content = self.read_file_content(e.file_path()).await;
+                Some(wrap(e, content))
+            }
+            None => None,
         }
     }
 
