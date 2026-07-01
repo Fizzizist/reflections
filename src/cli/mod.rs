@@ -73,8 +73,8 @@ fn resolve_today() -> Result<TimeRange> {
         NaiveTime::from_hms_opt(0, 0, 0).expect("valid time"),
     );
 
-    let start = local_to_utc(start_naive);
-    let end = local_to_utc(end_naive);
+    let start = local_to_utc(start_naive)?;
+    let end = local_to_utc(end_naive)?;
 
     Ok(TimeRange { start, end })
 }
@@ -101,8 +101,8 @@ fn resolve_week() -> Result<TimeRange> {
         NaiveTime::from_hms_opt(0, 0, 0).expect("valid time"),
     );
 
-    let start = local_to_utc(start_naive);
-    let end = local_to_utc(end_naive);
+    let start = local_to_utc(start_naive)?;
+    let end = local_to_utc(end_naive)?;
 
     Ok(TimeRange { start, end })
 }
@@ -114,13 +114,13 @@ fn resolve_explicit_range(start_str: &str, end_str: Option<&String>) -> Result<T
     let (end_date, end_time) = parse_date_input(end_str)?;
 
     let start_time = start_time.unwrap_or(NaiveTime::from_hms_opt(0, 0, 0).expect("valid time"));
-    let end_time = end_time.unwrap_or(NaiveTime::from_hms_opt(23, 59, 0).expect("valid time"));
+    let end_time = end_time.unwrap_or(NaiveTime::from_hms_opt(23, 59, 59).expect("valid time"));
 
     let start_naive = NaiveDateTime::new(start_date, start_time);
     let end_naive = NaiveDateTime::new(end_date, end_time);
 
-    let start = local_to_utc(start_naive);
-    let end = local_to_utc(end_naive);
+    let start = local_to_utc(start_naive)?;
+    let end = local_to_utc(end_naive)?;
 
     Ok(TimeRange { start, end })
 }
@@ -139,11 +139,13 @@ fn parse_date_input(input: &str) -> Result<(NaiveDate, Option<NaiveTime>)> {
     Ok((date, None))
 }
 
-fn local_to_utc(naive: NaiveDateTime) -> DateTime<Utc> {
+fn local_to_utc(naive: NaiveDateTime) -> Result<DateTime<Utc>> {
     match Local.from_local_datetime(&naive) {
-        LocalResult::Single(dt) => dt.with_timezone(&Utc),
-        LocalResult::Ambiguous(dt, _) => dt.with_timezone(&Utc),
-        LocalResult::None => Utc.from_utc_datetime(&naive),
+        LocalResult::Single(dt) => Ok(dt.with_timezone(&Utc)),
+        LocalResult::Ambiguous(dt, _) => Ok(dt.with_timezone(&Utc)),
+        LocalResult::None => Err(anyhow::anyhow!(
+            "local time does not exist (DST spring-forward gap)"
+        )),
     }
 }
 
@@ -239,7 +241,7 @@ mod tests {
 
         assert_eq!(end_local.hour(), 23);
         assert_eq!(end_local.minute(), 59);
-        assert_eq!(end_local.second(), 0);
+        assert_eq!(end_local.second(), 59);
     }
 
     #[test]
@@ -261,5 +263,17 @@ mod tests {
         assert_eq!(end_local.hour(), 9);
         assert_eq!(end_local.minute(), 0);
         assert_eq!(end_local.second(), 0);
+    }
+
+    #[test]
+    fn resolve_explicit_range_without_end_date_returns_error() {
+        let result = resolve_explicit_range("2026-01-25", None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_date_input_with_invalid_time_returns_error() {
+        let result = parse_date_input("2026-01-25 25:99");
+        assert!(result.is_err());
     }
 }

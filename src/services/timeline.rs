@@ -74,7 +74,7 @@ impl TimelineService {
         let events = repositories::event::list_by_date_range(&self.conn, start, end).await?;
         let mut entries = Vec::new();
         for event in events {
-            let entity = self.resolve_entity(&event).await?;
+            let entity = self.resolve_entity(&event).await.unwrap_or(None);
             entries.push(TimelineEntry {
                 event_id: event.event_id,
                 entity_id: event.entity_id,
@@ -160,7 +160,7 @@ mod tests {
     use chrono::Duration;
     use tempfile::tempdir;
 
-    async fn setup() -> (TimelineService, Connection, PathBuf) {
+    async fn setup() -> (TimelineService, Connection, PathBuf, tempfile::TempDir) {
         let db = turso::Builder::new_local(":memory:")
             .experimental_custom_types(true)
             .build()
@@ -173,12 +173,12 @@ mod tests {
         let root_dir = tempdir().expect("create tempdir failed");
         let root_path = root_dir.path().to_path_buf();
         let service = TimelineService::new(conn.clone(), root_path.clone());
-        (service, conn, root_path)
+        (service, conn, root_path, root_dir)
     }
 
     #[tokio::test]
     async fn get_timeline_returns_events_with_entities() {
-        let (svc, conn, root_path) = setup().await;
+        let (svc, conn, root_path, _root_dir) = setup().await;
 
         let mut todo_svc = TodoService::new(conn.clone());
         let todo = todo_svc
@@ -248,7 +248,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_timeline_includes_file_content() {
-        let (svc, conn, root_path) = setup().await;
+        let (svc, conn, root_path, _root_dir) = setup().await;
 
         let mut reflection_svc = ReflectionService::new(conn.clone(), root_path.clone());
         let reflection = reflection_svc
@@ -307,7 +307,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_timeline_handles_missing_file() {
-        let (svc, conn, root_path) = setup().await;
+        let (svc, conn, root_path, _root_dir) = setup().await;
 
         let mut reflection_svc = ReflectionService::new(conn.clone(), root_path.clone());
         let reflection = reflection_svc
@@ -349,7 +349,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_timeline_handles_deleted_entity() {
-        let (svc, mut conn, _root_path) = setup().await;
+        let (svc, mut conn, _root_path, _root_dir) = setup().await;
 
         let fake_id = Uuid::now_v7();
         let tx = conn.transaction().await.expect("tx begin failed");
@@ -396,7 +396,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_timeline_orders_oldest_first() {
-        let (svc, mut conn, _root_path) = setup().await;
+        let (svc, mut conn, _root_path, _root_dir) = setup().await;
 
         let now = Utc::now();
         let t1 = now - Duration::minutes(30);
@@ -456,7 +456,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_timeline_excludes_out_of_range() {
-        let (svc, mut conn, _root_path) = setup().await;
+        let (svc, mut conn, _root_path, _root_dir) = setup().await;
 
         let now = Utc::now();
         let start = now - Duration::hours(1);
@@ -491,7 +491,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_timeline_empty_range() {
-        let (svc, _conn, _root_path) = setup().await;
+        let (svc, _conn, _root_path, _root_dir) = setup().await;
 
         let now = Utc::now();
         let start = now - Duration::hours(1);
@@ -507,7 +507,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_timeline_status_change_event_has_todo_entity() {
-        let (svc, conn, _root_path) = setup().await;
+        let (svc, conn, _root_path, _root_dir) = setup().await;
 
         let mut todo_svc = TodoService::new(conn.clone());
         let todo = todo_svc
@@ -540,5 +540,50 @@ mod tests {
         }
 
         assert!(found_status_change, "should find status change event");
+    }
+
+    #[tokio::test]
+    async fn get_timeline_resolves_summary_entity_with_file_content() {
+        let (svc, mut conn, root_path, _root_dir) = setup().await;
+
+        let summary_id = Uuid::now_v7();
+        let ts = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let tx = conn.transaction().await.expect("tx begin failed");
+        tx.execute(
+            "INSERT INTO summary (summary_id, file_path, start, \"end\", created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (summary_id.to_string(), "test_summary.md".to_string(), ts.clone(), ts.clone(), ts.clone(), ts.clone()),
+        ).await.expect("insert summary failed");
+
+        tx.execute(
+            "INSERT INTO event (event_id, entity_id, event_type, metadata, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (Uuid::now_v7().to_string(), summary_id.to_string(), "SUMMARY_CREATED", "{}", ts.clone(), ts.clone()),
+        ).await.expect("insert event failed");
+        tx.commit().await.expect("commit failed");
+
+        fs::write(root_path.join("test_summary.md"), "summary content")
+            .await
+            .expect("write failed");
+
+        let now = Utc::now();
+        let start = now - Duration::hours(1);
+        let end = now + Duration::hours(1);
+
+        let entries = svc
+            .get_timeline(start, end)
+            .await
+            .expect("get_timeline failed");
+
+        let mut found_summary = false;
+        for entry in &entries {
+            if entry.event_type == EventType::SummaryCreated {
+                if let Some(TimelineEntity::Summary(s)) = &entry.entity {
+                    found_summary = true;
+                    assert_eq!(s.summary.id, summary_id);
+                    assert_eq!(s.content, Some("summary content".to_string()));
+                }
+            }
+        }
+
+        assert!(found_summary, "should find summary with content");
     }
 }
