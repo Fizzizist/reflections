@@ -3,10 +3,11 @@ use serde::Serialize;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize)]
-pub struct Meeting {
+pub struct Summary {
     pub id: Uuid,
-    pub name: String,
-    pub scheduled_at: DateTime<Utc>,
+    pub file_path: String,
+    pub start: DateTime<Utc>,
+    pub end: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
