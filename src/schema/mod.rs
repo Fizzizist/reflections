@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS entity_tag (
     updated_at timestamp NOT NULL
 ) STRICT;
 
-CREATE UNIQUE INDEX IF NOT EXISTS entity_tag_unq ON entity_tag(tag_id, entity_id)
+CREATE UNIQUE INDEX IF NOT EXISTS entity_tag_unq ON entity_tag(tag_id, entity_id);
 
 CREATE TABLE IF NOT EXISTS summary (
     summary_id uuid PRIMARY KEY,
