@@ -81,50 +81,66 @@ impl App {
 
     pub async fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
         if self.pending_g_prefix {
-            match key.code {
-                KeyCode::Char('t') => {
-                    self.active_tab = self.next_tab();
-                    self.pending_g_prefix = false;
-                    return Ok(false);
-                }
-                KeyCode::Char('T') => {
-                    self.active_tab = self.prev_tab();
-                    self.pending_g_prefix = false;
-                    return Ok(false);
-                }
-                _ => {
-                    self.pending_g_prefix = false;
-                }
-            }
+            return self.handle_g_prefix(key).await;
         }
 
-        if key.code == KeyCode::Char('g') && !self.is_modal_active() {
-            self.pending_g_prefix = true;
-            return Ok(false);
-        }
-
-        if !self.is_modal_active() && key.code == KeyCode::Char('R') {
-            let needs_clear = crate::tui::editor::create_and_edit_reflection(
-                &mut self.reflection_service,
-                &self.editor_fn,
-                None,
-            )
-            .await?;
+        if !self.is_modal_active()
+            && let Some(needs_clear) = self.handle_global_key(key).await?
+        {
             if needs_clear {
                 self.reflections_view.refresh().await?;
             }
             return Ok(needs_clear);
         }
 
-        if !self.is_modal_active() && key.code == KeyCode::Char('N') {
-            return crate::tui::editor::create_and_edit(
-                &mut self.note_service,
-                &self.editor_fn,
-                None,
-            )
-            .await;
-        }
+        self.delegate_to_tab(key).await
+    }
 
+    async fn handle_g_prefix(&mut self, key: KeyEvent) -> Result<bool> {
+        self.pending_g_prefix = false;
+        match key.code {
+            KeyCode::Char('t') => {
+                self.active_tab = self.next_tab();
+            }
+            KeyCode::Char('T') => {
+                self.active_tab = self.prev_tab();
+            }
+            _ => {
+                return self.delegate_to_tab(key).await;
+            }
+        }
+        Ok(false)
+    }
+
+    async fn handle_global_key(&mut self, key: KeyEvent) -> Result<Option<bool>> {
+        match key.code {
+            KeyCode::Char('g') => {
+                self.pending_g_prefix = true;
+                Ok(Some(false))
+            }
+            KeyCode::Char('R') => {
+                let needs_clear = crate::tui::editor::create_and_edit_reflection(
+                    &mut self.reflection_service,
+                    &self.editor_fn,
+                    None,
+                )
+                .await?;
+                Ok(Some(needs_clear))
+            }
+            KeyCode::Char('N') => {
+                let needs_clear = crate::tui::editor::create_and_edit(
+                    &mut self.note_service,
+                    &self.editor_fn,
+                    None,
+                )
+                .await?;
+                Ok(Some(needs_clear))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    async fn delegate_to_tab(&mut self, key: KeyEvent) -> Result<bool> {
         let needs_clear = match self.active_tab {
             Tab::TodoList => self.todo_list_view.handle_key(key).await?,
             Tab::Meetings => self.meetings_view.handle_key(key).await?,

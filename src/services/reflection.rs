@@ -8,6 +8,7 @@ use uuid::Uuid;
 use crate::models::event::EventType;
 use crate::models::reflection::Reflection;
 use crate::repositories;
+use crate::services::editable::EditableEntity;
 
 #[derive(Clone)]
 pub struct ReflectionService {
@@ -94,6 +95,22 @@ impl ReflectionService {
 
     pub fn full_path(&self, file_path: &str) -> std::path::PathBuf {
         self.root_dir.join(file_path)
+    }
+}
+
+impl EditableEntity for ReflectionService {
+    type Entity = Reflection;
+
+    async fn create(&mut self, related_id: Option<Uuid>) -> Result<Reflection> {
+        self.create_reflection(related_id).await
+    }
+
+    fn full_path(&self, file_path: &str) -> PathBuf {
+        ReflectionService::full_path(self, file_path)
+    }
+
+    async fn cleanup(&mut self, id: Uuid) -> Result<()> {
+        self.cleanup_reflection(id).await
     }
 }
 
