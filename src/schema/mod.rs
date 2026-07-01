@@ -45,11 +45,20 @@ CREATE TABLE IF NOT EXISTS note (
 
 CREATE TABLE IF NOT EXISTS tag (
     tag_id uuid PRIMARY KEY,
-    entity_id uuid NOT NULL,
-    label text NOT NULL,
+    label text NOT NULL UNIQUE,
     created_at timestamp NOT NULL,
     updated_at timestamp NOT NULL
 ) STRICT;
+
+CREATE TABLE IF NOT EXISTS entity_tag (
+    entity_tag_id uuid PRIMARY KEY,
+    tag_id uuid NOT NULL,
+    entity_id uuid NOT NULL,
+    created_at timestamp NOT NULL,
+    updated_at timestamp NOT NULL
+) STRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS entity_tag_unq ON entity_tag(tag_id, entity_id);
 
 CREATE TABLE IF NOT EXISTS summary (
     summary_id uuid PRIMARY KEY,
