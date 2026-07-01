@@ -51,9 +51,10 @@ the `schema` module and are applied at startup.
 ### Models
 
 The `models` module defines plain domain structs and their associated enums (e.g. `TodoItem`,
-`TodoStatus`, `Meeting`, `Event`, `EventType`, `Reflection`). Models are the in-memory representation of database rows
+`TodoStatus`, `Meeting`, `Event`, `EventType`, `Reflection`, `Note`). Models are the in-memory representation of database rows
 and carry no business logic themselves. Repositories translate between these model structs and
-the database tables.
+the database tables. Models that participate in the editor workflow implement `EditableEntityRecord`
+(defined in `services::editable`), exposing `id` and `file_path`.
 
 ### TUI
 
@@ -63,11 +64,14 @@ construct all services. No application logic lives inside the tui, it is just bu
 action performed by a user in the TUI is routed to a service to actually enact it. The `tui` module
 includes reusable sub-components such as `InputBox` (text input with cursor, character filtering,
 and max length), modal widgets (`InputModal`, `MeetingModal`, `StatusModal`), the `editor` module
-(spawning `$EDITOR` on reflection files, suspending and restoring the terminal), and
-`ReflectionsView` (listing reflections with resolved labels). Views that can create reflections
-(`TodoListView`, `MeetingsView`) own their own `ReflectionService` clone and `EditorFn`. The shared
-`create_and_edit_reflection` function in `editor.rs` orchestrates the create→edit→cleanup workflow
-used by the `r` key in views and the `R` key in App.
+(spawning `$EDITOR` on reflection/note files, suspending and restoring the terminal), and
+`ReflectionsView` (listing reflections with resolved labels). Views that can create reflections and
+notes (`TodoListView`, `MeetingsView`) own their own `ReflectionService` and `NoteService` clones.
+A single `EditorFn` (an `Arc<dyn Fn>`) is shared across App and all views. The generic
+`create_and_edit` function in `editor.rs` orchestrates the create→edit→cleanup workflow over any
+`T: EditableEntity`. It is used by the `r`/`R` keys for reflections and the `n`/`N` keys for notes.
+`n` in `TodoListView` and `MeetingsView` creates a note linked to the selected item; `N` in App
+creates a general (unlinked) note.
 
 ### CLI
 
@@ -80,7 +84,8 @@ that the tui interface. _Note: this module does not yet exist; it is planned._
 Services hold a clone of the database connection and perform operations across repositories.
 If database operations are involved, the service function should open a transaction and perform.
 All of the repository-related steps before committing it. All application logic should live in the
-service layer.
+service layer. Services that participate in the editor workflow implement `EditableEntity` (defined
+in `services::editable`), providing `create`, `full_path`, and `cleanup` operations.
 
 ### Repositories
 

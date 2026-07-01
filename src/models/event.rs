@@ -9,6 +9,7 @@ pub enum EventType {
     TodoItemStatusChanged,
     MeetingCreated,
     ReflectionCreated,
+    NoteCreated,
 }
 
 impl fmt::Display for EventType {
@@ -18,6 +19,7 @@ impl fmt::Display for EventType {
             EventType::TodoItemStatusChanged => write!(f, "TODO_ITEM_STATUS_CHANGED"),
             EventType::MeetingCreated => write!(f, "MEETING_CREATED"),
             EventType::ReflectionCreated => write!(f, "REFLECTION_CREATED"),
+            EventType::NoteCreated => write!(f, "NOTE_CREATED"),
         }
     }
 }
@@ -31,6 +33,7 @@ impl FromStr for EventType {
             "TODO_ITEM_STATUS_CHANGED" => Ok(EventType::TodoItemStatusChanged),
             "MEETING_CREATED" => Ok(EventType::MeetingCreated),
             "REFLECTION_CREATED" => Ok(EventType::ReflectionCreated),
+            "NOTE_CREATED" => Ok(EventType::NoteCreated),
             other => Err(anyhow::anyhow!("invalid EventType: {other}")),
         }
     }
@@ -66,6 +69,19 @@ mod tests {
                 .parse::<EventType>()
                 .expect("parse failed"),
             EventType::ReflectionCreated
+        );
+    }
+
+    #[test]
+    fn note_created_display() {
+        assert_eq!(EventType::NoteCreated.to_string(), "NOTE_CREATED");
+    }
+
+    #[test]
+    fn note_created_from_str() {
+        assert_eq!(
+            "NOTE_CREATED".parse::<EventType>().expect("parse failed"),
+            EventType::NoteCreated
         );
     }
 }

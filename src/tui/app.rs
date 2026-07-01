@@ -1,4 +1,5 @@
 use crate::services::meeting::MeetingService;
+use crate::services::note::NoteService;
 use crate::services::reflection::ReflectionService;
 use crate::services::todo::TodoService;
 use crate::tui::editor::EditorFn;
@@ -36,6 +37,7 @@ pub struct App {
     meetings_view: MeetingsView,
     reflections_view: ReflectionsView,
     reflection_service: ReflectionService,
+    note_service: NoteService,
     editor_fn: EditorFn,
     active_tab: Tab,
     pending_g_prefix: bool,
@@ -46,20 +48,24 @@ impl App {
         let editor_fn = crate::tui::editor::default_editor_fn();
         let todo_service = TodoService::new(conn.clone());
         let meeting_service = MeetingService::new(conn.clone());
+        let note_service = NoteService::new(conn.clone(), root_dir.clone());
         let reflection_service = ReflectionService::new(conn, root_dir);
         Self {
             todo_list_view: TodoListView::new(
                 todo_service,
                 reflection_service.clone(),
-                crate::tui::editor::default_editor_fn(),
+                editor_fn.clone(),
+                note_service.clone(),
             ),
             meetings_view: MeetingsView::new(
                 meeting_service,
                 reflection_service.clone(),
-                crate::tui::editor::default_editor_fn(),
+                editor_fn.clone(),
+                note_service.clone(),
             ),
             reflections_view: ReflectionsView::new(reflection_service.clone()),
             reflection_service,
+            note_service,
             editor_fn,
             active_tab: Tab::TodoList,
             pending_g_prefix: false,
@@ -75,41 +81,66 @@ impl App {
 
     pub async fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
         if self.pending_g_prefix {
-            match key.code {
-                KeyCode::Char('t') => {
-                    self.active_tab = self.next_tab();
-                    self.pending_g_prefix = false;
-                    return Ok(false);
-                }
-                KeyCode::Char('T') => {
-                    self.active_tab = self.prev_tab();
-                    self.pending_g_prefix = false;
-                    return Ok(false);
-                }
-                _ => {
-                    self.pending_g_prefix = false;
-                }
-            }
+            return self.handle_g_prefix(key).await;
         }
 
-        if key.code == KeyCode::Char('g') && !self.is_modal_active() {
-            self.pending_g_prefix = true;
-            return Ok(false);
-        }
-
-        if !self.is_modal_active() && key.code == KeyCode::Char('R') {
-            let needs_clear = crate::tui::editor::create_and_edit_reflection(
-                &mut self.reflection_service,
-                &self.editor_fn,
-                None,
-            )
-            .await?;
+        if !self.is_modal_active()
+            && let Some(needs_clear) = self.handle_global_key(key).await?
+        {
             if needs_clear {
                 self.reflections_view.refresh().await?;
             }
             return Ok(needs_clear);
         }
 
+        self.delegate_to_tab(key).await
+    }
+
+    async fn handle_g_prefix(&mut self, key: KeyEvent) -> Result<bool> {
+        self.pending_g_prefix = false;
+        match key.code {
+            KeyCode::Char('t') => {
+                self.active_tab = self.next_tab();
+            }
+            KeyCode::Char('T') => {
+                self.active_tab = self.prev_tab();
+            }
+            _ => {
+                return self.delegate_to_tab(key).await;
+            }
+        }
+        Ok(false)
+    }
+
+    async fn handle_global_key(&mut self, key: KeyEvent) -> Result<Option<bool>> {
+        match key.code {
+            KeyCode::Char('g') => {
+                self.pending_g_prefix = true;
+                Ok(Some(false))
+            }
+            KeyCode::Char('R') => {
+                let needs_clear = crate::tui::editor::create_and_edit_reflection(
+                    &mut self.reflection_service,
+                    &self.editor_fn,
+                    None,
+                )
+                .await?;
+                Ok(Some(needs_clear))
+            }
+            KeyCode::Char('N') => {
+                let needs_clear = crate::tui::editor::create_and_edit(
+                    &mut self.note_service,
+                    &self.editor_fn,
+                    None,
+                )
+                .await?;
+                Ok(Some(needs_clear))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    async fn delegate_to_tab(&mut self, key: KeyEvent) -> Result<bool> {
         let needs_clear = match self.active_tab {
             Tab::TodoList => self.todo_list_view.handle_key(key).await?,
             Tab::Meetings => self.meetings_view.handle_key(key).await?,
@@ -246,6 +277,7 @@ pub async fn run(conn: turso::Connection, root_dir: PathBuf) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use ratatui::backend::TestBackend;
+    use std::sync::Arc;
     use turso::Builder;
 
     use super::*;
@@ -309,14 +341,14 @@ mod tests {
     }
 
     fn test_editor_fn() -> EditorFn {
-        Box::new(|path: &std::path::Path| {
+        Arc::new(|path: &std::path::Path| {
             std::fs::write(path, "test reflection content")?;
             Ok(())
         })
     }
 
     fn noop_editor_fn() -> EditorFn {
-        Box::new(|_path: &std::path::Path| Ok(()))
+        Arc::new(|_path: &std::path::Path| Ok(()))
     }
 
     #[tokio::test]
@@ -859,5 +891,98 @@ mod tests {
             .await
             .expect("list failed");
         assert_eq!(reflections.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn n_key_on_todo_list_creates_note() {
+        let mut app = test_app().await;
+        app.init().await.expect("init failed");
+
+        let item = fixed_item("test item");
+        app.todo_list_view.set_items(vec![item.clone()]);
+        app.todo_list_view.set_selected_index(0);
+        app.set_todo_editor_fn(test_editor_fn());
+
+        let key_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
+        app.handle_key(key_n).await.expect("handle_key failed");
+
+        let notes = app.note_service.list_notes_for_test().await;
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].related_to_id, Some(item.id));
+    }
+
+    #[tokio::test]
+    async fn n_key_on_meetings_creates_note() {
+        let mut app = test_app().await;
+        app.init().await.expect("init failed");
+        app.active_tab = Tab::Meetings;
+        let meeting = fixed_meeting("Standup");
+        app.meetings_view.set_items(vec![meeting.clone()]);
+        app.meetings_view.set_selected_index(0);
+        app.set_meeting_editor_fn(test_editor_fn());
+
+        let key_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
+        app.handle_key(key_n).await.expect("handle_key failed");
+
+        let notes = app.note_service.list_notes_for_test().await;
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].related_to_id, Some(meeting.id));
+    }
+
+    #[tokio::test]
+    async fn capital_n_creates_general_note() {
+        let mut app = test_app().await;
+        app.init().await.expect("init failed");
+
+        app.set_app_editor_fn(test_editor_fn());
+
+        let key_n = KeyEvent::new(KeyCode::Char('N'), KeyModifiers::NONE);
+        app.handle_key(key_n).await.expect("handle_key failed");
+
+        let note_count = app.note_service.note_count().await;
+        assert_eq!(note_count, 1);
+    }
+
+    #[tokio::test]
+    async fn n_key_with_no_selection_does_nothing() {
+        let mut app = test_app().await;
+        app.init().await.expect("init failed");
+        app.todo_list_view.set_items(vec![fixed_item("task 1")]);
+
+        let key_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
+        app.handle_key(key_n).await.expect("handle_key failed");
+
+        let note_count = app.note_service.note_count().await;
+        assert_eq!(note_count, 0);
+    }
+
+    #[tokio::test]
+    async fn empty_editor_exit_cleans_up_note() {
+        let mut app = test_app().await;
+        app.init().await.expect("init failed");
+
+        app.set_app_editor_fn(noop_editor_fn());
+
+        let key_n = KeyEvent::new(KeyCode::Char('N'), KeyModifiers::NONE);
+        app.handle_key(key_n).await.expect("handle_key failed");
+
+        let note_count = app.note_service.note_count().await;
+        assert_eq!(note_count, 0);
+    }
+
+    #[tokio::test]
+    async fn empty_editor_exit_on_todo_cleans_up_note() {
+        let mut app = test_app().await;
+        app.init().await.expect("init failed");
+
+        app.todo_list_view.set_items(vec![fixed_item("test item")]);
+        app.todo_list_view.set_selected_index(0);
+        app.set_todo_editor_fn(noop_editor_fn());
+
+        let key_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
+        app.handle_key(key_n).await.expect("handle_key failed");
+
+        let note_count = app.note_service.note_count().await;
+        assert_eq!(note_count, 0);
     }
 }

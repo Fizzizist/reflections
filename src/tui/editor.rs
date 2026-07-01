@@ -1,3 +1,4 @@
+use crate::services::editable::{EditableEntity, EditableEntityRecord};
 use crate::services::reflection::ReflectionService;
 use anyhow::Result;
 use std::io::{self, Write};
@@ -9,10 +10,30 @@ use crossterm::execute;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use ratatui::crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
 
-pub type EditorFn = Box<dyn Fn(&Path) -> Result<()>>;
+use std::sync::Arc;
+
+pub type EditorFn = Arc<dyn Fn(&Path) -> Result<()>>;
 
 pub fn default_editor_fn() -> EditorFn {
-    Box::new(open_editor)
+    Arc::new(open_editor)
+}
+
+pub async fn create_and_edit<T: EditableEntity>(
+    service: &mut T,
+    editor_fn: &EditorFn,
+    related_id: Option<Uuid>,
+) -> Result<bool>
+where
+    T::Entity: EditableEntityRecord,
+{
+    let entity = service.create(related_id).await?;
+    let path = service.full_path(entity.file_path());
+    if let Err(e) = editor_fn(&path) {
+        service.cleanup(entity.id()).await?;
+        return Err(e);
+    }
+    service.cleanup(entity.id()).await?;
+    Ok(true)
 }
 
 pub async fn create_and_edit_reflection(
@@ -20,14 +41,7 @@ pub async fn create_and_edit_reflection(
     editor_fn: &EditorFn,
     about_id: Option<Uuid>,
 ) -> Result<bool> {
-    let reflection = reflection_service.create_reflection(about_id).await?;
-    let path = reflection_service.full_path(&reflection.file_path);
-    if let Err(e) = editor_fn(&path) {
-        reflection_service.cleanup_reflection(reflection.id).await?;
-        return Err(e);
-    }
-    reflection_service.cleanup_reflection(reflection.id).await?;
-    Ok(true)
+    create_and_edit(reflection_service, editor_fn, about_id).await
 }
 
 pub fn open_editor(file_path: &Path) -> Result<()> {

@@ -1,5 +1,6 @@
 use super::splash;
 use crate::models::todo_item::{TodoItem, TodoStatus};
+use crate::services::note::NoteService;
 use crate::services::reflection::ReflectionService;
 use crate::services::todo::TodoService;
 use crate::tui::editor::EditorFn;
@@ -24,6 +25,7 @@ pub struct TodoListView {
     status_modal: StatusModal,
     reflection_service: ReflectionService,
     editor_fn: EditorFn,
+    note_service: NoteService,
 }
 
 impl TodoListView {
@@ -31,6 +33,7 @@ impl TodoListView {
         service: TodoService,
         reflection_service: ReflectionService,
         editor_fn: EditorFn,
+        note_service: NoteService,
     ) -> Self {
         Self {
             items: Vec::new(),
@@ -41,6 +44,7 @@ impl TodoListView {
             status_modal: StatusModal::new(),
             reflection_service,
             editor_fn,
+            note_service,
         }
     }
 
@@ -120,6 +124,17 @@ impl TodoListView {
             {
                 return super::editor::create_and_edit_reflection(
                     &mut self.reflection_service,
+                    &self.editor_fn,
+                    Some(item.id),
+                )
+                .await;
+            }
+            KeyCode::Char('n')
+                if let Some(idx) = self.selected_index
+                    && let Some(item) = self.items.get(idx) =>
+            {
+                return super::editor::create_and_edit(
+                    &mut self.note_service,
                     &self.editor_fn,
                     Some(item.id),
                 )
