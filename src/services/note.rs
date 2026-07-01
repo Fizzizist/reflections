@@ -53,6 +53,7 @@ impl NoteService {
 
         if is_empty_or_missing {
             repositories::note::delete(&tx, id).await?;
+            repositories::event::delete_by_entity_id(&tx, id).await?;
             tx.commit().await?;
 
             if let Err(e) = fs::remove_file(&full_path).await
@@ -253,6 +254,16 @@ mod tests {
         assert_eq!(note_count(&svc).await, 0);
 
         assert!(!full_path.exists());
+
+        let mut rows = svc
+            .conn
+            .query(
+                "SELECT event_id FROM event WHERE entity_id = ?",
+                [note.id.to_string()],
+            )
+            .await
+            .expect("query failed");
+        assert!(rows.next().await.expect("fetch failed").is_none());
     }
 
     #[tokio::test]
@@ -290,5 +301,15 @@ mod tests {
             .expect("cleanup should succeed when file is missing");
 
         assert_eq!(note_count(&svc).await, 0);
+
+        let mut rows = svc
+            .conn
+            .query(
+                "SELECT event_id FROM event WHERE entity_id = ?",
+                [note.id.to_string()],
+            )
+            .await
+            .expect("query failed");
+        assert!(rows.next().await.expect("fetch failed").is_none());
     }
 }

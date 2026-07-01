@@ -54,6 +54,7 @@ impl ReflectionService {
 
         if is_empty_or_missing {
             repositories::reflection::delete(&tx, id).await?;
+            repositories::event::delete_by_entity_id(&tx, id).await?;
             tx.commit().await?;
 
             if let Err(e) = fs::remove_file(&full_path).await
@@ -210,6 +211,16 @@ mod tests {
             .conn
             .query(
                 "SELECT reflection_id FROM reflection WHERE reflection_id = ?",
+                [reflection.id.to_string()],
+            )
+            .await
+            .expect("query failed");
+        assert!(rows.next().await.expect("fetch failed").is_none());
+
+        let mut rows = svc
+            .conn
+            .query(
+                "SELECT event_id FROM event WHERE entity_id = ?",
                 [reflection.id.to_string()],
             )
             .await
