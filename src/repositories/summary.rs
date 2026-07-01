@@ -1,5 +1,4 @@
 use anyhow::Result;
-use chrono::{DateTime, Utc};
 use turso::Connection;
 use uuid::Uuid;
 
@@ -40,36 +39,11 @@ pub async fn find_by_id(conn: &Connection, id: Uuid) -> Result<Option<Summary>> 
     Ok(None)
 }
 
-#[allow(dead_code)]
-pub async fn list_by_date_range(
-    conn: &Connection,
-    start: DateTime<Utc>,
-    end: DateTime<Utc>,
-) -> Result<Vec<Summary>> {
-    let sql = "SELECT summary_id, file_path, start, \"end\", created_at, updated_at FROM summary WHERE created_at >= ? AND created_at < ? ORDER BY created_at ASC";
-    let mut rows = conn
-        .query(
-            sql,
-            (
-                start.format("%Y-%m-%d %H:%M:%S").to_string(),
-                end.format("%Y-%m-%d %H:%M:%S").to_string(),
-            ),
-        )
-        .await?;
-
-    let mut summaries = Vec::new();
-    while let Some(row) = rows.next().await? {
-        summaries.push(row_to_summary(&row)?);
-    }
-
-    Ok(summaries)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::schema;
-    use chrono::Duration;
+    use chrono::Utc;
 
     async fn setup() -> Connection {
         let db = turso::Builder::new_local(":memory:")
@@ -113,48 +87,5 @@ mod tests {
         let found = find_by_id(&conn, nonexistent).await.expect("find failed");
 
         assert!(found.is_none());
-    }
-
-    #[tokio::test]
-    async fn list_by_date_range_returns_summaries_in_range() {
-        let mut conn = setup().await;
-        let tx = conn.transaction().await.expect("tx begin failed");
-
-        let now = Utc::now();
-        let start = now - Duration::hours(1);
-        let end = now + Duration::hours(1);
-
-        let ts1 = (start + Duration::minutes(10))
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string();
-        let ts2 = (start + Duration::minutes(30))
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string();
-        let ts_out = (start - Duration::hours(2))
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string();
-
-        tx.execute(
-            "INSERT INTO summary (summary_id, file_path, start, \"end\", created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (Uuid::now_v7().to_string(), "test1.md".to_string(), ts1.clone(), ts1.clone(), ts1.clone(), ts1.clone()),
-        ).await.expect("insert s1 failed");
-
-        tx.execute(
-            "INSERT INTO summary (summary_id, file_path, start, \"end\", created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (Uuid::now_v7().to_string(), "test2.md".to_string(), ts2.clone(), ts2.clone(), ts2.clone(), ts2.clone()),
-        ).await.expect("insert s2 failed");
-
-        tx.execute(
-            "INSERT INTO summary (summary_id, file_path, start, \"end\", created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (Uuid::now_v7().to_string(), "test3.md".to_string(), ts_out.clone(), ts_out.clone(), ts_out.clone(), ts_out.clone()),
-        ).await.expect("insert s3 failed");
-
-        tx.commit().await.expect("commit failed");
-
-        let summaries = list_by_date_range(&conn, start, end)
-            .await
-            .expect("list failed");
-
-        assert_eq!(summaries.len(), 2);
     }
 }

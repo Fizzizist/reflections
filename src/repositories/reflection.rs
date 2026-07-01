@@ -90,7 +90,6 @@ pub async fn get_by_id(tx: &Transaction<'_>, id: Uuid) -> Result<Reflection> {
     Err(QueryReturnedNoRows.into())
 }
 
-#[allow(dead_code)]
 pub async fn find_by_id(conn: &Connection, id: Uuid) -> Result<Option<Reflection>> {
     let sql = "SELECT reflection_id, about_id, file_path, created_at, updated_at FROM reflection WHERE reflection_id = ?";
     let mut rows = conn.query(sql, (id.to_string(),)).await?;

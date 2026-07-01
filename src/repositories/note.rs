@@ -78,7 +78,6 @@ pub async fn delete(tx: &Transaction<'_>, id: Uuid) -> Result<()> {
     Ok(())
 }
 
-#[allow(dead_code)]
 pub async fn find_by_id(conn: &Connection, id: Uuid) -> Result<Option<Note>> {
     let sql = "SELECT note_id, related_to_id, file_path, created_at, updated_at FROM note WHERE note_id = ?";
     let mut rows = conn.query(sql, (id.to_string(),)).await?;
