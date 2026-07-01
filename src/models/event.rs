@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use serde::Serialize;
 use std::fmt;
 use std::str::FromStr;
 use uuid::Uuid;
@@ -10,6 +11,7 @@ pub enum EventType {
     MeetingCreated,
     ReflectionCreated,
     NoteCreated,
+    SummaryCreated,
 }
 
 impl fmt::Display for EventType {
@@ -20,6 +22,7 @@ impl fmt::Display for EventType {
             EventType::MeetingCreated => write!(f, "MEETING_CREATED"),
             EventType::ReflectionCreated => write!(f, "REFLECTION_CREATED"),
             EventType::NoteCreated => write!(f, "NOTE_CREATED"),
+            EventType::SummaryCreated => write!(f, "SUMMARY_CREATED"),
         }
     }
 }
@@ -34,13 +37,13 @@ impl FromStr for EventType {
             "MEETING_CREATED" => Ok(EventType::MeetingCreated),
             "REFLECTION_CREATED" => Ok(EventType::ReflectionCreated),
             "NOTE_CREATED" => Ok(EventType::NoteCreated),
+            "SUMMARY_CREATED" => Ok(EventType::SummaryCreated),
             other => Err(anyhow::anyhow!("invalid EventType: {other}")),
         }
     }
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Event {
     pub event_id: Uuid,
     pub entity_id: Uuid,
@@ -48,6 +51,15 @@ pub struct Event {
     pub metadata: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+impl Serialize for EventType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
 }
 
 #[cfg(test)]
@@ -82,6 +94,17 @@ mod tests {
         assert_eq!(
             "NOTE_CREATED".parse::<EventType>().expect("parse failed"),
             EventType::NoteCreated
+        );
+    }
+
+    #[test]
+    fn summary_created_display_and_from_str() {
+        assert_eq!(EventType::SummaryCreated.to_string(), "SUMMARY_CREATED");
+        assert_eq!(
+            "SUMMARY_CREATED"
+                .parse::<EventType>()
+                .expect("parse failed"),
+            EventType::SummaryCreated
         );
     }
 }

@@ -5,18 +5,16 @@ use uuid::Uuid;
 use crate::services::editable::EditableEntityRecord;
 
 #[derive(Debug, Clone, Serialize)]
-pub struct Note {
+pub struct Summary {
     pub id: Uuid,
-    #[allow(dead_code)]
-    pub related_to_id: Option<Uuid>,
     pub file_path: String,
-    #[allow(dead_code)]
+    pub start: DateTime<Utc>,
+    pub end: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
-    #[allow(dead_code)]
     pub updated_at: DateTime<Utc>,
 }
 
-impl EditableEntityRecord for Note {
+impl EditableEntityRecord for Summary {
     fn id(&self) -> Uuid {
         self.id
     }

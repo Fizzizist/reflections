@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use serde::Serialize;
 use std::fmt;
 use std::str::FromStr;
 use uuid::Uuid;
@@ -20,6 +21,15 @@ impl fmt::Display for TodoStatus {
     }
 }
 
+impl Serialize for TodoStatus {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
 impl FromStr for TodoStatus {
     type Err = anyhow::Error;
 
@@ -33,7 +43,7 @@ impl FromStr for TodoStatus {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TodoItem {
     pub id: Uuid,
     pub label: String,

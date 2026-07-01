@@ -42,8 +42,7 @@ cargo fmt                            # Format
 ## Architecture
 
 The Reflections application is opinionated about keeping layers and abstractions. There is a TUI
-frontend (a CLI frontend is planned but not yet implemented), that should only interact with the
-outer service layer. The services contain the application logic and keep state via the
+frontend and a CLI frontend, both of which should only interact with the outer service layer. The services contain the application logic and keep state via the
 repositories. Repositories are the abstraction layer around the database. The database is an
 embedded Turso (libSQL) instance stored locally at `reflections.db`. Schema definitions live in
 the `schema` module and are applied at startup.
@@ -51,7 +50,7 @@ the `schema` module and are applied at startup.
 ### Models
 
 The `models` module defines plain domain structs and their associated enums (e.g. `TodoItem`,
-`TodoStatus`, `Meeting`, `Event`, `EventType`, `Reflection`, `Note`). Models are the in-memory representation of database rows
+`TodoStatus`, `Meeting`, `Event`, `EventType`, `Reflection`, `Note`, `Summary`). Models are the in-memory representation of database rows
 and carry no business logic themselves. Repositories translate between these model structs and
 the database tables. Models that participate in the editor workflow implement `EditableEntityRecord`
 (defined in `services::editable`), exposing `id` and `file_path`.
@@ -77,7 +76,10 @@ creates a general (unlinked) note.
 
 The `cli` module is for performing 1-time cli commands to services. A cli command should instantiate
 and enact actions on services, similar to the tui except it is interacting with the command rather
-that the tui interface. _Note: this module does not yet exist; it is planned._
+that the tui interface. The `reflect timeline` command queries events within a time period, resolves
+each event to its full entity data, reads `.md` file content for entities with a `file_path`, and
+outputs JSON to stdout. Three invocation modes: `today`, `week` (Monday–Sunday), and explicit date
+range. When no subcommand is given, the TUI launches.
 
 ### Service
 

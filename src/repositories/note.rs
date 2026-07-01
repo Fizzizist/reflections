@@ -1,6 +1,6 @@
 use anyhow::Result;
 use chrono::Utc;
-use turso::{Error::QueryReturnedNoRows, transaction::Transaction};
+use turso::{Connection, Error::QueryReturnedNoRows, transaction::Transaction};
 use uuid::Uuid;
 
 use crate::models::note::Note;
@@ -76,6 +76,17 @@ pub async fn delete(tx: &Transaction<'_>, id: Uuid) -> Result<()> {
     let sql = "DELETE FROM note WHERE note_id = ?";
     tx.execute(sql, (id.to_string(),)).await?;
     Ok(())
+}
+
+pub async fn find_by_id(conn: &Connection, id: Uuid) -> Result<Option<Note>> {
+    let sql = "SELECT note_id, related_to_id, file_path, created_at, updated_at FROM note WHERE note_id = ?";
+    let mut rows = conn.query(sql, (id.to_string(),)).await?;
+    let row = rows.next().await?;
+    while rows.next().await.is_ok_and(|r| r.is_some()) {}
+    if let Some(row) = row {
+        return Ok(Some(row_to_note(&row)?));
+    }
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -163,5 +174,37 @@ mod tests {
         assert_eq!(fetched.file_path, inserted.file_path);
         assert_eq!(fetched.related_to_id, inserted.related_to_id);
         tx.commit().await.expect("commit failed");
+    }
+
+    #[tokio::test]
+    async fn find_by_id_returns_some_when_found() {
+        let mut conn = setup().await;
+        let tx = conn.transaction().await.expect("tx begin failed");
+
+        let inserted = insert(&tx, None, "/path/to/note.md")
+            .await
+            .expect("insert failed");
+        tx.commit().await.expect("commit failed");
+
+        let found = super::find_by_id(&conn, inserted.id)
+            .await
+            .expect("find failed");
+
+        assert!(found.is_some());
+        let found = found.expect("expected some");
+        assert_eq!(found.id, inserted.id);
+        assert_eq!(found.file_path, inserted.file_path);
+    }
+
+    #[tokio::test]
+    async fn find_by_id_returns_none_when_not_found() {
+        let mut conn = setup().await;
+
+        let nonexistent = Uuid::now_v7();
+        let found = super::find_by_id(&conn, nonexistent)
+            .await
+            .expect("find failed");
+
+        assert!(found.is_none());
     }
 }
