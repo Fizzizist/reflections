@@ -40,11 +40,12 @@ impl SummaryService {
         let tx = self.conn.transaction().await?;
         let summary = repositories::summary::insert(&tx, id, &relative_path, start, end).await?;
         repositories::event::insert(&tx, summary.id, &EventType::SummaryCreated, "{}").await?;
-        tx.commit().await?;
 
         let dir_path = full_path.parent().expect("full_path has a parent");
         create_dir_all(dir_path).await?;
         fs::write(&full_path, content).await?;
+
+        tx.commit().await?;
 
         Ok(summary)
     }
@@ -187,5 +188,47 @@ mod tests {
 
         let full_path = svc.full_path(&summary.file_path);
         assert!(full_path.exists());
+    }
+
+    #[tokio::test]
+    async fn create_summary_rolls_back_on_file_write_failure() {
+        let db = turso::Builder::new_local(":memory:")
+            .experimental_custom_types(true)
+            .build()
+            .await
+            .expect("db build failed");
+        let conn = db.connect().expect("db connect failed");
+        schema::init_schema(&conn)
+            .await
+            .expect("schema init failed");
+        let root_dir = tempdir().expect("create tempdir failed");
+        let root_path = root_dir.path().to_path_buf();
+
+        let fake_root = root_path.join("blocker");
+        fs::write(&fake_root, "not a directory")
+            .await
+            .expect("write failed");
+
+        let mut svc = SummaryService::new(conn, fake_root);
+
+        let start = Utc::now();
+        let end = start + chrono::Duration::hours(1);
+        let result = svc.create_summary(start, end, "test content").await;
+
+        assert!(result.is_err());
+
+        let mut rows = svc
+            .conn
+            .query("SELECT summary_id FROM summary", ())
+            .await
+            .expect("query failed");
+        assert!(rows.next().await.expect("fetch failed").is_none());
+
+        let mut rows = svc
+            .conn
+            .query("SELECT event_id FROM event", ())
+            .await
+            .expect("query failed");
+        assert!(rows.next().await.expect("fetch failed").is_none());
     }
 }
