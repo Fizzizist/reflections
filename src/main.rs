@@ -17,6 +17,9 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Some(Command::Timeline(args)) => cli::run_timeline(args).await,
+        Some(Command::Summary(args)) => match args.command {
+            cli::SummaryCommand::Create(create_args) => cli::run_summary_create(create_args).await,
+        },
         None => {
             let db = Builder::new_local("reflections.db")
                 .experimental_custom_types(true)

@@ -3,10 +3,11 @@ use chrono::{
     DateTime, Datelike, Local, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc,
 };
 use clap::{Args, Parser, Subcommand};
-use std::io;
+use std::io::{self, Read};
 use turso::Builder;
 
 use crate::schema;
+use crate::services::summary::SummaryService;
 use crate::services::timeline::TimelineService;
 
 #[derive(Parser)]
@@ -19,6 +20,26 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Command {
     Timeline(TimelineArgs),
+    Summary(SummaryArgs),
+}
+
+#[derive(Args)]
+pub struct SummaryArgs {
+    #[command(subcommand)]
+    pub command: SummaryCommand,
+}
+
+#[derive(Subcommand)]
+pub enum SummaryCommand {
+    Create(SummaryCreateArgs),
+}
+
+#[derive(Args)]
+pub struct SummaryCreateArgs {
+    /// Start of the summary timeframe (format: %Y-%m-%d or %Y-%m-%d %H:%M)
+    pub start: String,
+    /// End of the summary timeframe (format: %Y-%m-%d or %Y-%m-%d %H:%M)
+    pub end: String,
 }
 
 #[derive(Args)]
@@ -50,6 +71,39 @@ pub async fn run_timeline(args: TimelineArgs) -> Result<()> {
         .context("failed to get timeline entries")?;
 
     serde_json::to_writer_pretty(io::stdout(), &entries).context("failed to write JSON output")?;
+    Ok(())
+}
+
+pub async fn run_summary_create(args: SummaryCreateArgs) -> Result<()> {
+    let db = Builder::new_local("reflections.db")
+        .experimental_custom_types(true)
+        .build()
+        .await
+        .context("failed to build database")?;
+    let conn = db.connect().context("failed to connect to database")?;
+    schema::init_schema(&conn).await?;
+    let root_dir = std::env::current_dir().context("failed to get current directory")?;
+
+    let mut content = String::new();
+    io::stdin()
+        .read_to_string(&mut content)
+        .context("failed to read stdin")?;
+
+    if content.is_empty() {
+        anyhow::bail!("stdin content cannot be empty");
+    }
+
+    let (start_date, start_time) = parse_date_input(&args.start)?;
+    let (end_date, end_time) = parse_date_input(&args.end)?;
+    let start_time = start_time.unwrap_or(NaiveTime::from_hms_opt(0, 0, 0).expect("valid time"));
+    let end_time = end_time.unwrap_or(NaiveTime::from_hms_opt(23, 59, 59).expect("valid time"));
+    let start = local_to_utc(NaiveDateTime::new(start_date, start_time))?;
+    let end = local_to_utc(NaiveDateTime::new(end_date, end_time))?;
+
+    let mut service = SummaryService::new(conn, root_dir);
+    let summary = service.create_summary(start, end, &content).await?;
+
+    serde_json::to_writer_pretty(io::stdout(), &summary).context("failed to write JSON output")?;
     Ok(())
 }
 
@@ -275,5 +329,40 @@ mod tests {
     fn parse_date_input_with_invalid_time_returns_error() {
         let result = parse_date_input("2026-01-25 25:99");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_summary_timestamps_valid() {
+        let (start_date, start_time) = parse_date_input("2026-01-01").expect("parse failed");
+        assert_eq!(
+            start_date,
+            NaiveDate::from_ymd_opt(2026, 1, 1).expect("valid date")
+        );
+        assert!(start_time.is_none());
+
+        let (end_date, end_time) = parse_date_input("2026-01-31").expect("parse failed");
+        assert_eq!(
+            end_date,
+            NaiveDate::from_ymd_opt(2026, 1, 31).expect("valid date")
+        );
+        assert!(end_time.is_none());
+    }
+
+    #[test]
+    fn summary_create_args_validation() {
+        let result =
+            Cli::try_parse_from(["reflect", "summary", "create", "2026-01-01", "2026-01-31"])
+                .expect("parse failed");
+
+        match result.command {
+            Some(Command::Summary(args)) => {
+                let create_args = match args.command {
+                    SummaryCommand::Create(ca) => ca,
+                };
+                assert_eq!(create_args.start, "2026-01-01");
+                assert_eq!(create_args.end, "2026-01-31");
+            }
+            _ => panic!("Expected Command::Summary"),
+        }
     }
 }

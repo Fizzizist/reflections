@@ -27,10 +27,11 @@ impl ReflectionService {
         let date_dir = now.format("%Y/%m/%d").to_string();
         let file_name = format!("{}.md", id);
         let relative_path = format!("{}/{}", date_dir, file_name);
-        let full_path = self.root_dir.join(&relative_path);
+        let full_path = self.full_path(&relative_path);
 
         let tx = self.conn.transaction().await?;
-        let reflection = repositories::reflection::insert(&tx, about_id, &relative_path).await?;
+        let reflection =
+            repositories::reflection::insert(&tx, id, about_id, &relative_path).await?;
         repositories::event::insert(&tx, reflection.id, &EventType::ReflectionCreated, "{}")
             .await?;
         tx.commit().await?;
@@ -43,16 +44,21 @@ impl ReflectionService {
     }
 
     pub async fn cleanup_reflection(&mut self, id: Uuid) -> Result<()> {
-        let tx = self.conn.transaction().await?;
-        let reflection = repositories::reflection::get_by_id(&tx, id).await?;
+        let reflection = {
+            let tx = self.conn.transaction().await?;
+            let reflection = repositories::reflection::get_by_id(&tx, id).await?;
+            tx.commit().await?;
+            reflection
+        };
 
-        let full_path = self.root_dir.join(&reflection.file_path);
+        let full_path = self.full_path(&reflection.file_path);
         let is_empty_or_missing = match fs::metadata(&full_path).await {
             Ok(meta) => meta.len() == 0,
             Err(_) => true,
         };
 
         if is_empty_or_missing {
+            let tx = self.conn.transaction().await?;
             repositories::reflection::delete(&tx, id).await?;
             repositories::event::delete_by_entity_id(&tx, id).await?;
             tx.commit().await?;
@@ -62,8 +68,6 @@ impl ReflectionService {
             {
                 return Err(e.into());
             }
-        } else {
-            tx.commit().await?;
         }
 
         Ok(())

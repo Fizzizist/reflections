@@ -1,5 +1,8 @@
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use turso::Connection;
+use turso::Error::QueryReturnedNoRows;
+use turso::transaction::Transaction;
 use uuid::Uuid;
 
 use crate::models::summary::Summary;
@@ -39,11 +42,43 @@ pub async fn find_by_id(conn: &Connection, id: Uuid) -> Result<Option<Summary>> 
     Ok(None)
 }
 
+pub async fn insert(
+    tx: &Transaction<'_>,
+    id: Uuid,
+    file_path: &str,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> Result<Summary> {
+    let sql = r#"INSERT INTO summary (summary_id, file_path, start, "end", created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?)
+                 RETURNING summary_id, file_path, start, "end", created_at, updated_at"#;
+    let now = Utc::now().to_rfc3339();
+    let mut rows = tx
+        .query(
+            sql,
+            (
+                id.to_string(),
+                file_path.to_string(),
+                start.to_rfc3339(),
+                end.to_rfc3339(),
+                now.clone(),
+                now,
+            ),
+        )
+        .await?;
+    let row = rows.next().await?;
+    while rows.next().await?.is_some() {}
+    if let Some(row) = row {
+        return row_to_summary(&row);
+    }
+    Err(QueryReturnedNoRows.into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::schema;
-    use chrono::Utc;
+    use chrono::{TimeZone, Utc};
 
     async fn setup() -> Connection {
         let db = turso::Builder::new_local(":memory:")
@@ -81,11 +116,57 @@ mod tests {
 
     #[tokio::test]
     async fn find_by_id_returns_none_when_not_found() {
-        let mut conn = setup().await;
+        let conn = setup().await;
 
         let nonexistent = Uuid::now_v7();
         let found = find_by_id(&conn, nonexistent).await.expect("find failed");
 
         assert!(found.is_none());
+    }
+
+    #[tokio::test]
+    async fn insert_creates_summary_row() {
+        let mut conn = setup().await;
+        let tx = conn.transaction().await.expect("tx begin failed");
+
+        let id = Uuid::now_v7();
+        let start = Utc::now();
+        let end = start + chrono::Duration::hours(1);
+        let summary = insert(&tx, id, "test.md", start, end)
+            .await
+            .expect("insert failed");
+
+        assert_eq!(summary.id, id);
+        assert_eq!(summary.file_path, "test.md");
+        tx.commit().await.expect("commit failed");
+
+        let found = find_by_id(&conn, summary.id).await.expect("find failed");
+        assert!(found.is_some());
+        let found = found.expect("expected some");
+        assert_eq!(found.id, summary.id);
+        assert_eq!(found.file_path, "test.md");
+        assert_eq!(found.start.timestamp(), start.timestamp());
+        assert_eq!(found.end.timestamp(), end.timestamp());
+    }
+
+    #[tokio::test]
+    async fn insert_stores_start_and_end_correctly() {
+        let mut conn = setup().await;
+        let tx = conn.transaction().await.expect("tx begin failed");
+
+        let id = Uuid::now_v7();
+        let start = Utc.with_ymd_and_hms(2024, 1, 15, 10, 30, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2024, 1, 15, 11, 30, 0).unwrap();
+
+        let summary = insert(&tx, id, "test.md", start, end)
+            .await
+            .expect("insert failed");
+        tx.commit().await.expect("commit failed");
+
+        let found = find_by_id(&conn, summary.id).await.expect("find failed");
+        assert!(found.is_some());
+        let found = found.expect("expected some");
+        assert_eq!(found.start, start);
+        assert_eq!(found.end, end);
     }
 }
