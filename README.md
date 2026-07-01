@@ -34,4 +34,9 @@ The CLI here was mainly designed to be used by an AI to read from the timeline a
 of what the user did for that time period.
 
 - `timeline` -- output a timeline for the given time period in JSON format
-- `summary` -- Pass a summary into stdin to write a summary.
+  - `reflect timeline today`
+  - `reflect timeline week`
+  - `reflect timeline <start> <end>` (format: `%Y-%m-%d` or `%Y-%m-%d %H:%M`)
+- `summary create <start> <end>` -- create a summary by piping markdown content via stdin
+  - `echo "content" | reflect summary create 2026-06-30 2026-07-06`
+  - Timestamps use the same format as `timeline`

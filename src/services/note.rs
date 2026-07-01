@@ -27,10 +27,10 @@ impl NoteService {
         let date_dir = now.format("%Y/%m/%d").to_string();
         let file_name = format!("{}.md", id);
         let relative_path = format!("{}/{}", date_dir, file_name);
-        let full_path = self.root_dir.join(&relative_path);
+        let full_path = self.full_path(&relative_path);
 
         let tx = self.conn.transaction().await?;
-        let note = repositories::note::insert(&tx, related_to_id, &relative_path).await?;
+        let note = repositories::note::insert(&tx, id, related_to_id, &relative_path).await?;
         repositories::event::insert(&tx, note.id, &EventType::NoteCreated, "{}").await?;
         tx.commit().await?;
 
@@ -44,14 +44,17 @@ impl NoteService {
     pub async fn cleanup_note(&mut self, id: Uuid) -> Result<()> {
         let tx = self.conn.transaction().await?;
         let note = repositories::note::get_by_id(&tx, id).await?;
+        let file_path = note.file_path.clone();
+        tx.commit().await?;
 
-        let full_path = self.root_dir.join(&note.file_path);
+        let full_path = self.full_path(&file_path);
         let is_empty_or_missing = match fs::metadata(&full_path).await {
             Ok(meta) => meta.len() == 0,
             Err(_) => true,
         };
 
         if is_empty_or_missing {
+            let tx = self.conn.transaction().await?;
             repositories::note::delete(&tx, id).await?;
             repositories::event::delete_by_entity_id(&tx, id).await?;
             tx.commit().await?;
@@ -61,8 +64,6 @@ impl NoteService {
             {
                 return Err(e.into());
             }
-        } else {
-            tx.commit().await?;
         }
 
         Ok(())

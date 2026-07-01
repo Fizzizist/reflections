@@ -32,6 +32,7 @@ fn row_to_note(row: &turso::Row) -> Result<Note> {
 
 pub async fn insert(
     tx: &Transaction<'_>,
+    id: Uuid,
     related_to_id: Option<Uuid>,
     file_path: &str,
 ) -> Result<Note> {
@@ -39,7 +40,6 @@ pub async fn insert(
                  VALUES (?, ?, ?, ?, ?)
                  RETURNING note_id, related_to_id, file_path, created_at, updated_at"#;
     let now = Utc::now().to_rfc3339();
-    let id = Uuid::now_v7();
     let related_to_id_str = related_to_id.map(|id| id.to_string());
     let mut rows = tx
         .query(
@@ -114,12 +114,14 @@ mod tests {
         let tx = conn.transaction().await.expect("tx begin failed");
         let related_id = Uuid::now_v7();
 
-        let note = insert(&tx, Some(related_id), "/path/to/note.md")
+        let id = Uuid::now_v7();
+        let note = insert(&tx, id, Some(related_id), "/path/to/note.md")
             .await
             .expect("insert failed");
 
         assert_eq!(note.related_to_id, Some(related_id));
         assert_eq!(note.file_path, "/path/to/note.md");
+        assert_eq!(note.id, id);
         tx.commit().await.expect("commit failed");
     }
 
@@ -128,12 +130,14 @@ mod tests {
         let mut conn = setup().await;
         let tx = conn.transaction().await.expect("tx begin failed");
 
-        let note = insert(&tx, None, "/path/to/note.md")
+        let id = Uuid::now_v7();
+        let note = insert(&tx, id, None, "/path/to/note.md")
             .await
             .expect("insert failed");
 
         assert_eq!(note.related_to_id, None);
         assert_eq!(note.file_path, "/path/to/note.md");
+        assert_eq!(note.id, id);
         tx.commit().await.expect("commit failed");
     }
 
@@ -142,7 +146,8 @@ mod tests {
         let mut conn = setup().await;
         let tx = conn.transaction().await.expect("tx begin failed");
 
-        let note = insert(&tx, None, "/path/to/note.md")
+        let id = Uuid::now_v7();
+        let note = insert(&tx, id, None, "/path/to/note.md")
             .await
             .expect("insert failed");
         super::delete(&tx, note.id).await.expect("delete failed");
@@ -163,7 +168,8 @@ mod tests {
         let mut conn = setup().await;
         let tx = conn.transaction().await.expect("tx begin failed");
 
-        let inserted = insert(&tx, None, "/path/to/note.md")
+        let id = Uuid::now_v7();
+        let inserted = insert(&tx, id, None, "/path/to/note.md")
             .await
             .expect("insert failed");
 
@@ -181,7 +187,8 @@ mod tests {
         let mut conn = setup().await;
         let tx = conn.transaction().await.expect("tx begin failed");
 
-        let inserted = insert(&tx, None, "/path/to/note.md")
+        let id = Uuid::now_v7();
+        let inserted = insert(&tx, id, None, "/path/to/note.md")
             .await
             .expect("insert failed");
         tx.commit().await.expect("commit failed");

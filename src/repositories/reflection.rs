@@ -32,6 +32,7 @@ fn row_to_reflection(row: &turso::Row) -> Result<Reflection> {
 
 pub async fn insert(
     tx: &Transaction<'_>,
+    id: Uuid,
     about_id: Option<Uuid>,
     file_path: &str,
 ) -> Result<Reflection> {
@@ -39,7 +40,6 @@ pub async fn insert(
                  VALUES (?, ?, ?, ?, ?)
                  RETURNING reflection_id, about_id, file_path, created_at, updated_at"#;
     let now = Utc::now().to_rfc3339();
-    let id = Uuid::now_v7();
     let about_id_str = about_id.map(|id| id.to_string());
     let mut rows = tx
         .query(
@@ -125,12 +125,14 @@ mod tests {
         let tx = conn.transaction().await.expect("tx begin failed");
         let about_id = Uuid::now_v7();
 
-        let reflection = insert(&tx, Some(about_id), "/path/to/reflection.md")
+        let id = Uuid::now_v7();
+        let reflection = insert(&tx, id, Some(about_id), "/path/to/reflection.md")
             .await
             .expect("insert failed");
 
         assert_eq!(reflection.about_id, Some(about_id));
         assert_eq!(reflection.file_path, "/path/to/reflection.md");
+        assert_eq!(reflection.id, id);
         tx.commit().await.expect("commit failed");
     }
 
@@ -139,12 +141,14 @@ mod tests {
         let mut conn = setup().await;
         let tx = conn.transaction().await.expect("tx begin failed");
 
-        let reflection = insert(&tx, None, "/path/to/reflection.md")
+        let id = Uuid::now_v7();
+        let reflection = insert(&tx, id, None, "/path/to/reflection.md")
             .await
             .expect("insert failed");
 
         assert_eq!(reflection.about_id, None);
         assert_eq!(reflection.file_path, "/path/to/reflection.md");
+        assert_eq!(reflection.id, id);
         tx.commit().await.expect("commit failed");
     }
 
@@ -153,7 +157,8 @@ mod tests {
         let mut conn = setup().await;
         let tx = conn.transaction().await.expect("tx begin failed");
 
-        let r1 = insert(&tx, None, "/path/to/first.md")
+        let id1 = Uuid::now_v7();
+        let r1 = insert(&tx, id1, None, "/path/to/first.md")
             .await
             .expect("insert r1 failed");
         tx.commit().await.expect("commit failed");
@@ -161,7 +166,8 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
         let tx2 = conn.transaction().await.expect("tx2 begin failed");
-        let r2 = insert(&tx2, None, "/path/to/second.md")
+        let id2 = Uuid::now_v7();
+        let r2 = insert(&tx2, id2, None, "/path/to/second.md")
             .await
             .expect("insert r2 failed");
         tx2.commit().await.expect("commit2 failed");
@@ -180,7 +186,8 @@ mod tests {
         let mut conn = setup().await;
         let tx = conn.transaction().await.expect("tx begin failed");
 
-        let reflection = insert(&tx, None, "/path/to/reflection.md")
+        let id = Uuid::now_v7();
+        let reflection = insert(&tx, id, None, "/path/to/reflection.md")
             .await
             .expect("insert failed");
         super::delete(&tx, reflection.id)
@@ -199,7 +206,8 @@ mod tests {
         let mut conn = setup().await;
         let tx = conn.transaction().await.expect("tx begin failed");
 
-        let inserted = insert(&tx, None, "/path/to/reflection.md")
+        let id = Uuid::now_v7();
+        let inserted = insert(&tx, id, None, "/path/to/reflection.md")
             .await
             .expect("insert failed");
 
@@ -217,7 +225,8 @@ mod tests {
         let mut conn = setup().await;
         let tx = conn.transaction().await.expect("tx begin failed");
 
-        let inserted = insert(&tx, None, "/path/to/reflection.md")
+        let id = Uuid::now_v7();
+        let inserted = insert(&tx, id, None, "/path/to/reflection.md")
             .await
             .expect("insert failed");
         tx.commit().await.expect("commit failed");
