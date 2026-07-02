@@ -8,6 +8,7 @@ use uuid::Uuid;
 use crate::models::event::EventType;
 use crate::models::summary::Summary;
 use crate::repositories;
+use crate::services::tag::TagService;
 
 #[derive(Clone)]
 pub struct SummaryService {
@@ -45,6 +46,11 @@ impl SummaryService {
         create_dir_all(dir_path).await?;
         fs::write(&full_path, content).await?;
 
+        let labels = TagService::extract_tags(content);
+        if !labels.is_empty() {
+            TagService::sync_tags(&tx, summary.id, &labels).await?;
+        }
+
         tx.commit().await?;
 
         Ok(summary)
@@ -58,6 +64,7 @@ impl SummaryService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::repositories;
     use crate::schema;
     use chrono::{TimeZone, Utc};
     use tempfile::tempdir;
@@ -230,5 +237,27 @@ mod tests {
             .await
             .expect("query failed");
         assert!(rows.next().await.expect("fetch failed").is_none());
+    }
+
+    #[tokio::test]
+    async fn create_summary_extracts_tags() {
+        let (mut svc, _root_dir) = setup().await;
+
+        let start = Utc::now();
+        let end = start + chrono::Duration::hours(1);
+        let content = "Summary with #alpha and #beta-project tags";
+        let summary = svc
+            .create_summary(start, end, content)
+            .await
+            .expect("create failed");
+
+        let tags = repositories::tag::find_tags_for_entity(&svc.conn, summary.id)
+            .await
+            .expect("find_tags_for_entity failed");
+
+        assert_eq!(tags.len(), 2);
+        let labels: Vec<String> = tags.iter().map(|t| t.label.clone()).collect();
+        assert!(labels.contains(&"alpha".to_string()));
+        assert!(labels.contains(&"beta-project".to_string()));
     }
 }

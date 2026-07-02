@@ -2294,6 +2294,7 @@ dependencies = [
  "hjkl-splash",
  "insta",
  "ratatui",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",
