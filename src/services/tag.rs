@@ -32,17 +32,22 @@ pub fn extract_tags(content: &str) -> Vec<String> {
 }
 
 pub async fn sync_tags(tx: &Transaction<'_>, entity_id: Uuid, labels: &[String]) -> Result<()> {
-    for label in labels {
-        let tag_id = Uuid::now_v7();
-        let tag = repositories::tag::insert(tx, tag_id, label)
-            .await
-            .with_context(|| format!("upserting tag '{}'", label))?;
-
-        let entity_tag_id = Uuid::now_v7();
-        repositories::tag::insert_entity_tag(tx, entity_tag_id, tag.id, entity_id)
-            .await
-            .with_context(|| format!("linking tag '{}' to entity", label))?;
+    if labels.is_empty() {
+        return Ok(());
     }
+
+    let entries: Vec<(Uuid, String)> = labels
+        .iter()
+        .map(|label| (Uuid::now_v7(), label.clone()))
+        .collect();
+
+    let tag_ids = repositories::tag::insert_batch(tx, &entries)
+        .await
+        .context("batch upserting tags")?;
+
+    repositories::tag::insert_entity_tag_batch(tx, &tag_ids, entity_id)
+        .await
+        .context("batch linking tags to entity")?;
 
     Ok(())
 }
