@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::models::event::EventType;
 use crate::models::summary::Summary;
 use crate::repositories;
-use crate::services::tag::TagService;
+use crate::services::tag;
 
 #[derive(Clone)]
 pub struct SummaryService {
@@ -46,9 +46,9 @@ impl SummaryService {
         create_dir_all(dir_path).await?;
         fs::write(&full_path, content).await?;
 
-        let labels = TagService::extract_tags(content);
+        let labels = tag::extract_tags(content);
         if !labels.is_empty() {
-            TagService::sync_tags(&tx, summary.id, &labels).await?;
+            tag::sync_tags(&tx, summary.id, &labels).await?;
         }
 
         tx.commit().await?;

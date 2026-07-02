@@ -1,6 +1,9 @@
 use anyhow::Result;
 use chrono::Utc;
-use turso::{Connection, Error::QueryReturnedNoRows, transaction::Transaction};
+#[cfg(test)]
+use turso::Connection;
+use turso::Error::QueryReturnedNoRows;
+use turso::transaction::Transaction;
 use uuid::Uuid;
 
 use crate::models::tag::Tag;
@@ -39,12 +42,12 @@ pub async fn insert(tx: &Transaction<'_>, id: Uuid, label: &str) -> Result<Tag> 
     Err(QueryReturnedNoRows.into())
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub async fn find_by_label(conn: &Connection, label: &str) -> Result<Option<Tag>> {
     let sql = "SELECT tag_id, label, created_at, updated_at FROM tag WHERE label = ?";
     let mut rows = conn.query(sql, (label.to_string(),)).await?;
     let row = rows.next().await?;
-    while rows.next().await.is_ok_and(|r| r.is_some()) {}
+    while rows.next().await?.is_some() {}
     if let Some(row) = row {
         return Ok(Some(row_to_tag(&row)?));
     }
@@ -74,7 +77,7 @@ pub async fn insert_entity_tag(
     Ok(())
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub async fn find_tags_for_entity(conn: &Connection, entity_id: Uuid) -> Result<Vec<Tag>> {
     let sql = r#"SELECT t.tag_id, t.label, t.created_at, t.updated_at
                  FROM tag t

@@ -9,7 +9,7 @@ use crate::models::event::EventType;
 use crate::models::note::Note;
 use crate::repositories;
 use crate::services::editable::EditableEntity;
-use crate::services::tag::TagService;
+use crate::services::tag;
 
 #[derive(Clone)]
 pub struct NoteService {
@@ -66,13 +66,7 @@ impl NoteService {
                 return Err(e.into());
             }
         } else {
-            let content = fs::read_to_string(&full_path).await?;
-            let labels = TagService::extract_tags(&content);
-            if !labels.is_empty() {
-                let tx = self.conn.transaction().await?;
-                TagService::sync_tags(&tx, id, &labels).await?;
-                tx.commit().await?;
-            }
+            tag::sync_tags_from_file(&mut self.conn, id, &full_path).await?;
         }
 
         Ok(())
@@ -293,6 +287,15 @@ mod tests {
 
         let content = fs::read_to_string(&full_path).await.expect("read failed");
         assert_eq!(content, "note content");
+
+        let tags = repositories::tag::find_tags_for_entity(&svc.conn, note.id)
+            .await
+            .expect("find_tags_for_entity failed");
+        assert_eq!(
+            tags.len(),
+            0,
+            "no tags should be linked for content without tags"
+        );
     }
 
     #[tokio::test]
