@@ -9,6 +9,7 @@ use crate::models::event::EventType;
 use crate::models::note::Note;
 use crate::repositories;
 use crate::services::editable::EditableEntity;
+use crate::services::tag;
 
 #[derive(Clone)]
 pub struct NoteService {
@@ -64,6 +65,8 @@ impl NoteService {
             {
                 return Err(e.into());
             }
+        } else {
+            tag::sync_tags_from_file(&mut self.conn, id, &full_path).await?;
         }
 
         Ok(())
@@ -284,6 +287,15 @@ mod tests {
 
         let content = fs::read_to_string(&full_path).await.expect("read failed");
         assert_eq!(content, "note content");
+
+        let tags = repositories::tag::find_tags_for_entity(&svc.conn, note.id)
+            .await
+            .expect("find_tags_for_entity failed");
+        assert_eq!(
+            tags.len(),
+            0,
+            "no tags should be linked for content without tags"
+        );
     }
 
     #[tokio::test]
@@ -312,5 +324,61 @@ mod tests {
             .await
             .expect("query failed");
         assert!(rows.next().await.expect("fetch failed").is_none());
+    }
+
+    #[tokio::test]
+    async fn cleanup_note_with_tags_preserves_entity_and_links_tags() {
+        let (mut svc, root_dir) = setup().await;
+
+        let note = svc.create_note(None).await.expect("create failed");
+
+        let full_path = root_dir.join(&note.file_path);
+        fs::write(&full_path, "Notes about #alpha and #beta-project")
+            .await
+            .expect("write failed");
+
+        svc.cleanup_note(note.id).await.expect("cleanup failed");
+
+        assert_eq!(note_count(&svc).await, 1);
+
+        let tags = repositories::tag::find_tags_for_entity(&svc.conn, note.id)
+            .await
+            .expect("find_tags_for_entity failed");
+
+        assert_eq!(tags.len(), 2);
+        let labels: Vec<&str> = tags.iter().map(|t| t.label.as_str()).collect();
+        assert!(labels.contains(&"alpha"));
+        assert!(labels.contains(&"beta-project"));
+    }
+
+    #[tokio::test]
+    async fn cleanup_note_empty_deletes_entity_no_tag_rows() {
+        let (mut svc, _root_dir) = setup().await;
+
+        let note = svc.create_note(None).await.expect("create failed");
+
+        svc.cleanup_note(note.id).await.expect("cleanup failed");
+
+        assert_eq!(note_count(&svc).await, 0);
+
+        let mut rows = svc
+            .conn
+            .query("SELECT COUNT(*) FROM tag", ())
+            .await
+            .expect("query failed");
+        let row = rows.next().await.expect("fetch failed").expect("no rows");
+        while rows.next().await.expect("fetch failed").is_some() {}
+        let count: i64 = row.get(0).expect("get count failed");
+        assert_eq!(count, 0);
+
+        let mut rows = svc
+            .conn
+            .query("SELECT COUNT(*) FROM entity_tag", ())
+            .await
+            .expect("query failed");
+        let row = rows.next().await.expect("fetch failed").expect("no rows");
+        while rows.next().await.expect("fetch failed").is_some() {}
+        let count: i64 = row.get(0).expect("get count failed");
+        assert_eq!(count, 0);
     }
 }

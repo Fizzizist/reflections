@@ -40,3 +40,11 @@ of what the user did for that time period.
 - `summary create <start> <end>` -- create a summary by piping markdown content via stdin
   - `echo "content" | reflect summary create 2026-06-30 2026-07-06`
   - Timestamps use the same format as `timeline`
+
+## Tags
+
+Any `#hashtag` found in the content of reflections, notes, and summaries is automatically extracted
+and linked to the entity. Tags are case-insensitive and stored lowercase. Markdown headings (`# Heading`)
+are not extracted as tags — only hashtags that start with a letter (`#alpha`, `#beta-project`) are
+captured. Tags can appear anywhere in the text: after whitespace, punctuation, or at the start of a
+line.

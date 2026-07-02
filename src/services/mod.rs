@@ -3,5 +3,6 @@ pub mod meeting;
 pub mod note;
 pub mod reflection;
 pub mod summary;
+pub mod tag;
 pub mod timeline;
 pub mod todo;

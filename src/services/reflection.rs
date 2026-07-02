@@ -9,6 +9,7 @@ use crate::models::event::EventType;
 use crate::models::reflection::Reflection;
 use crate::repositories;
 use crate::services::editable::EditableEntity;
+use crate::services::tag;
 
 #[derive(Clone)]
 pub struct ReflectionService {
@@ -68,6 +69,8 @@ impl ReflectionService {
             {
                 return Err(e.into());
             }
+        } else {
+            tag::sync_tags_from_file(&mut self.conn, id, &full_path).await?;
         }
 
         Ok(())
@@ -255,6 +258,15 @@ mod tests {
 
         let content = fs::read_to_string(&full_path).await.expect("read failed");
         assert_eq!(content, "reflection content");
+
+        let tags = repositories::tag::find_tags_for_entity(&svc.conn, reflection.id)
+            .await
+            .expect("find_tags_for_entity failed");
+        assert_eq!(
+            tags.len(),
+            0,
+            "no tags should be linked for content without tags"
+        );
     }
 
     #[tokio::test]
@@ -331,5 +343,67 @@ mod tests {
             .await
             .expect("resolve failed");
         assert!(label.starts_with("General Reflection"));
+    }
+
+    #[tokio::test]
+    async fn cleanup_with_tags_preserves_entity_and_links_tags() {
+        let (mut svc, root_dir) = setup().await;
+
+        let reflection = svc.create_reflection(None).await.expect("create failed");
+
+        let full_path = root_dir.join(&reflection.file_path);
+        fs::write(&full_path, "Working on #alpha-project and #beta")
+            .await
+            .expect("write failed");
+
+        svc.cleanup_reflection(reflection.id)
+            .await
+            .expect("cleanup failed");
+
+        let reflections = svc.list_reflections().await.expect("list failed");
+        assert_eq!(reflections.len(), 1);
+        assert_eq!(reflections[0].id, reflection.id);
+
+        let entity_tags = repositories::tag::find_tags_for_entity(&svc.conn, reflection.id)
+            .await
+            .expect("find_tags_for_entity failed");
+        assert_eq!(entity_tags.len(), 2);
+        let labels: Vec<&str> = entity_tags.iter().map(|t| t.label.as_str()).collect();
+        assert!(labels.contains(&"alpha-project"));
+        assert!(labels.contains(&"beta"));
+    }
+
+    #[tokio::test]
+    async fn cleanup_empty_deletes_entity_no_tag_rows() {
+        let (mut svc, _root_dir) = setup().await;
+
+        let reflection = svc.create_reflection(None).await.expect("create failed");
+
+        svc.cleanup_reflection(reflection.id)
+            .await
+            .expect("cleanup failed");
+
+        let reflections = svc.list_reflections().await.expect("list failed");
+        assert_eq!(reflections.len(), 0);
+
+        let mut rows = svc
+            .conn
+            .query("SELECT COUNT(*) FROM tag", ())
+            .await
+            .expect("query failed");
+        let row = rows.next().await.expect("fetch failed").expect("no rows");
+        while rows.next().await.expect("fetch failed").is_some() {}
+        let count: i64 = row.get(0).expect("get count failed");
+        assert_eq!(count, 0);
+
+        let mut rows = svc
+            .conn
+            .query("SELECT COUNT(*) FROM entity_tag", ())
+            .await
+            .expect("query failed");
+        let row = rows.next().await.expect("fetch failed").expect("no rows");
+        while rows.next().await.expect("fetch failed").is_some() {}
+        let count: i64 = row.get(0).expect("get count failed");
+        assert_eq!(count, 0);
     }
 }

@@ -50,7 +50,7 @@ the `schema` module and are applied at startup.
 ### Models
 
 The `models` module defines plain domain structs and their associated enums (e.g. `TodoItem`,
-`TodoStatus`, `Meeting`, `Event`, `EventType`, `Reflection`, `Note`, `Summary`). Models are the in-memory representation of database rows
+`TodoStatus`, `Meeting`, `Event`, `EventType`, `Reflection`, `Note`, `Summary`, `Tag`). Models are the in-memory representation of database rows
 and carry no business logic themselves. Repositories translate between these model structs and
 the database tables. Models that participate in the editor workflow implement `EditableEntityRecord`
 (defined in `services::editable`), exposing `id` and `file_path`.
@@ -93,7 +93,12 @@ All of the repository-related steps before committing it. All application logic 
 service layer. Services that participate in the editor workflow implement `EditableEntity` (defined
 in `services::editable`), providing `create`, `full_path`, and `cleanup` operations. `SummaryService`
 does not implement `EditableEntity` — summaries are created with content provided directly via stdin,
-not through the editor workflow.
+not through the editor workflow. The `services::tag` module provides `extract_tags` (a pure regex-based
+function that pulls `#hashtag` labels from markdown content) and `sync_tags` (batched upsert + link
+within a transaction). `sync_tags_from_file` reads a file, extracts tags, and syncs them — used by
+both `ReflectionService::cleanup_reflection` and `NoteService::cleanup_note` in their non-empty branches.
+`SummaryService::create_summary` calls `extract_tags` and `sync_tags` directly within its transaction
+using in-memory content. Tags are case-insensitive (stored lowercase) and deduplicated.
 
 ### Repositories
 
