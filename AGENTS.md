@@ -124,7 +124,8 @@ The `calendar` module provides the abstraction layer for external calendar integ
 within a time range. The `calendar::google` submodule implements `CalendarBackend` for Google
 Calendar, handling OAuth2 authentication (browser-based flow with manual copy-paste fallback), token
 storage at `~/.config/reflections/token.json`, and the Calendar API HTTP client. OAuth client
-credentials are embedded at build time via `env!` macros (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`).
+credentials are read from a `google_secrets.json` file at the project root by `build.rs` and
+embedded into the binary via `cargo:rustc-env` (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`).
 The `calendar::types` module defines the `CalendarEvent` struct shared between backends and services.
 `MeetingService::sync_meetings` accepts a `&dyn CalendarBackend`, fetches events, and upserts them
 (matching by name within the time range) in a single transaction.

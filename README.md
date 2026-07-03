@@ -16,9 +16,10 @@ cargo install --git https://github.com/fizzizist/reflections.git
 If you don't use Neovim you might want to set the `EDITOR` env var so that the app knows what editor
 to open when you make a note.
 
-Google Calendar sync requires OAuth credentials embedded at build time. The developer (not the end
-user) must provide `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` environment variables during
-`cargo build`. Tokens are cached per-user at `~/.config/reflections/token.json`. See
+Google Calendar sync requires OAuth credentials provided at build time via a `google_secrets.json`
+file at the project root containing `client_id` and `client_secret` fields. The developer (not the
+end user) creates an OAuth 2.0 Desktop app client in the Google Cloud Console and places the
+credentials in this file. Tokens are cached per-user at `~/.config/reflections/token.json`. See
 [Google's OAuth desktop app documentation](https://developers.google.com/identity/protocols/oauth2/native-app)
 for creating credentials.
 
