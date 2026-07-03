@@ -339,11 +339,11 @@ mod tests {
 
         let mut found_reflection = false;
         for entry in &entries {
-            if let Some(TimelineEntity::Reflection(r)) = &entry.entity {
-                if r.reflection.id == reflection.id {
-                    found_reflection = true;
-                    assert_eq!(r.content, None);
-                }
+            if let Some(TimelineEntity::Reflection(r)) = &entry.entity
+                && r.reflection.id == reflection.id
+            {
+                found_reflection = true;
+                assert_eq!(r.content, None);
             }
         }
 
@@ -581,12 +581,12 @@ mod tests {
 
         let mut found_summary = false;
         for entry in &entries {
-            if entry.event_type == EventType::SummaryCreated {
-                if let Some(TimelineEntity::Summary(s)) = &entry.entity {
-                    found_summary = true;
-                    assert_eq!(s.summary.id, summary_id);
-                    assert_eq!(s.content, Some("summary content".to_string()));
-                }
+            if entry.event_type == EventType::SummaryCreated
+                && let Some(TimelineEntity::Summary(s)) = &entry.entity
+            {
+                found_summary = true;
+                assert_eq!(s.summary.id, summary_id);
+                assert_eq!(s.content, Some("summary content".to_string()));
             }
         }
 

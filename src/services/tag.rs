@@ -192,13 +192,13 @@ mod tests {
         let entity_id2 = Uuid::now_v7();
 
         let tx1 = conn.transaction().await.expect("tx1 begin failed");
-        sync_tags(&tx1, entity_id1, &vec!["alpha".to_string()])
+        sync_tags(&tx1, entity_id1, &["alpha".to_string()])
             .await
             .expect("sync_tags failed");
         tx1.commit().await.expect("commit1 failed");
 
         let tx2 = conn.transaction().await.expect("tx2 begin failed");
-        sync_tags(&tx2, entity_id2, &vec!["alpha".to_string()])
+        sync_tags(&tx2, entity_id2, &["alpha".to_string()])
             .await
             .expect("sync_tags failed");
         tx2.commit().await.expect("commit2 failed");

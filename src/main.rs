@@ -1,3 +1,4 @@
+mod calendar;
 mod cli;
 mod models;
 mod repositories;
@@ -19,6 +20,9 @@ async fn main() -> Result<()> {
         Some(Command::Timeline(args)) => cli::run_timeline(args).await,
         Some(Command::Summary(args)) => match args.command {
             cli::SummaryCommand::Create(create_args) => cli::run_summary_create(create_args).await,
+        },
+        Some(Command::Meeting(args)) => match args.command {
+            cli::MeetingCommand::Sync(sync_args) => cli::run_meeting_sync(sync_args).await,
         },
         None => {
             let db = Builder::new_local("reflections.db")

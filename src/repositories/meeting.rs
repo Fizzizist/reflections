@@ -89,11 +89,67 @@ pub async fn find_by_id(conn: &Connection, id: Uuid) -> Result<Option<Meeting>> 
     Ok(None)
 }
 
+pub async fn find_by_name_and_date_range(
+    tx: &Transaction<'_>,
+    name: &str,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> Result<Option<Meeting>> {
+    let sql = r#"SELECT meeting_id, name, scheduled_at, created_at, updated_at 
+                 FROM meeting 
+                 WHERE name = ? AND scheduled_at >= ? AND scheduled_at < ? 
+                 LIMIT 1"#;
+    let mut rows = tx
+        .query(
+            sql,
+            (
+                name.to_string(),
+                start.format("%Y-%m-%d %H:%M:%S").to_string(),
+                end.format("%Y-%m-%d %H:%M:%S").to_string(),
+            ),
+        )
+        .await?;
+    let row = rows.next().await?;
+    while rows.next().await.is_ok_and(|r| r.is_some()) {}
+    if let Some(row) = row {
+        return Ok(Some(row_to_meeting(&row)?));
+    }
+    Ok(None)
+}
+
+pub async fn update_scheduled_at(
+    tx: &Transaction<'_>,
+    id: Uuid,
+    scheduled_at: DateTime<Utc>,
+) -> Result<Meeting> {
+    let sql = r#"UPDATE meeting 
+                 SET scheduled_at = ?, updated_at = ? 
+                 WHERE meeting_id = ? 
+                 RETURNING meeting_id, name, scheduled_at, created_at, updated_at"#;
+    let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let mut rows = tx
+        .query(
+            sql,
+            (
+                scheduled_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+                now,
+                id.to_string(),
+            ),
+        )
+        .await?;
+    let row = rows.next().await?;
+    if let Some(row) = row {
+        return row_to_meeting(&row);
+    }
+    Err(QueryReturnedNoRows.into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::schema;
     use chrono::Duration;
+    use chrono::Timelike;
 
     async fn setup() -> Connection {
         let db = turso::Builder::new_local(":memory:")
@@ -184,5 +240,92 @@ mod tests {
 
         assert_eq!(meetings.len(), 1);
         assert_eq!(meetings[0].id, today_meeting.id);
+    }
+
+    #[tokio::test]
+    async fn find_by_name_and_date_range_returns_existing_meeting() {
+        let mut conn = setup().await;
+        let tx = conn.transaction().await.expect("tx begin failed");
+
+        let now = Utc::now();
+        let start = now - Duration::hours(1);
+        let end = now + Duration::hours(1);
+        let scheduled_at = now;
+
+        let inserted = insert(&tx, "Target Meeting", scheduled_at)
+            .await
+            .expect("insert failed");
+
+        let found = find_by_name_and_date_range(&tx, "Target Meeting", start, end)
+            .await
+            .expect("find failed")
+            .expect("meeting exists");
+
+        assert_eq!(found.id, inserted.id);
+        assert_eq!(found.name, "Target Meeting");
+        tx.commit().await.expect("commit failed");
+    }
+
+    #[tokio::test]
+    async fn find_by_name_and_date_range_returns_none_for_no_match() {
+        let mut conn = setup().await;
+        let tx = conn.transaction().await.expect("tx begin failed");
+
+        let now = Utc::now();
+        let start = now - Duration::hours(1);
+        let end = now + Duration::hours(1);
+
+        let result = find_by_name_and_date_range(&tx, "Nonexistent Meeting", start, end)
+            .await
+            .expect("find failed");
+
+        assert!(result.is_none());
+        tx.commit().await.expect("commit failed");
+    }
+
+    #[tokio::test]
+    async fn find_by_name_and_date_range_returns_none_for_name_match_outside_range() {
+        let mut conn = setup().await;
+        let tx = conn.transaction().await.expect("tx begin failed");
+
+        let now = Utc::now();
+        let start = now + Duration::hours(2);
+        let end = now + Duration::hours(4);
+        let scheduled_at = now - Duration::hours(2);
+
+        insert(&tx, "Outside Range Meeting", scheduled_at)
+            .await
+            .expect("insert failed");
+
+        let result = find_by_name_and_date_range(&tx, "Outside Range Meeting", start, end)
+            .await
+            .expect("find failed");
+
+        assert!(result.is_none());
+        tx.commit().await.expect("commit failed");
+    }
+
+    #[tokio::test]
+    async fn update_scheduled_at_updates_row_and_bumps_updated_at() {
+        let mut conn = setup().await;
+        let tx = conn.transaction().await.expect("tx begin failed");
+
+        let original_scheduled = Utc::now();
+        let meeting = insert(&tx, "Update Test Meeting", original_scheduled)
+            .await
+            .expect("insert failed");
+
+        let new_scheduled = original_scheduled + Duration::hours(2);
+        let updated = update_scheduled_at(&tx, meeting.id, new_scheduled)
+            .await
+            .expect("update failed");
+
+        assert_eq!(updated.id, meeting.id);
+        assert_eq!(updated.name, "Update Test Meeting");
+        let updated_scheduled_truncated = updated.scheduled_at.with_nanosecond(0).expect("valid");
+        let new_scheduled_truncated = new_scheduled.with_nanosecond(0).expect("valid");
+        assert_eq!(updated_scheduled_truncated, new_scheduled_truncated);
+        assert!(updated.updated_at >= meeting.created_at);
+        tx.commit().await.expect("commit failed");
     }
 }

@@ -119,7 +119,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_summary_writes_content_to_file() {
-        let (mut svc, root_dir) = setup().await;
+        let (mut svc, _root_dir) = setup().await;
 
         let start = Utc::now();
         let end = start + chrono::Duration::hours(1);
@@ -180,7 +180,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_summary_file_path_uses_current_time_not_provided_timestamps() {
-        let (mut svc, root_dir) = setup().await;
+        let (mut svc, _root_dir) = setup().await;
 
         let start = Utc.with_ymd_and_hms(2020, 1, 1, 10, 0, 0).unwrap();
         let end = Utc.with_ymd_and_hms(2020, 1, 1, 11, 0, 0).unwrap();
