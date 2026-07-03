@@ -7,6 +7,7 @@ use crate::calendar::backend::CalendarBackend;
 use crate::models::event::EventType;
 use crate::models::meeting::Meeting;
 use crate::repositories;
+use crate::repositories::meeting::MeetingFilter;
 
 pub struct MeetingService {
     conn: Connection,
@@ -44,7 +45,8 @@ impl MeetingService {
             }
         };
         let end = start + chrono::Duration::days(1);
-        repositories::meeting::list_by_date(&self.conn, start, end).await
+        let filter = MeetingFilter::new().start(start).end(end);
+        repositories::meeting::find(&self.conn, &filter).await
     }
 
     pub async fn sync_meetings(
@@ -58,21 +60,22 @@ impl MeetingService {
         let mut results = Vec::new();
 
         for event in calendar_events {
-            let existing =
-                repositories::meeting::find_by_name_and_date_range(&tx, &event.name, start, end)
-                    .await?;
+            let filter = MeetingFilter::new().name(&event.name).start(start).end(end);
+            let existing = repositories::meeting::find_one(&tx, &filter).await?;
 
             match existing {
                 Some(meeting) if meeting.scheduled_at == event.scheduled_at => {
                     continue;
                 }
                 Some(meeting) => {
-                    let updated = repositories::meeting::update_scheduled_at(
-                        &tx,
-                        meeting.id,
-                        event.scheduled_at,
-                    )
-                    .await?;
+                    let updated_meeting = Meeting {
+                        id: meeting.id,
+                        name: meeting.name.clone(),
+                        scheduled_at: event.scheduled_at,
+                        created_at: meeting.created_at,
+                        updated_at: meeting.updated_at,
+                    };
+                    let updated = repositories::meeting::update(&tx, &updated_meeting).await?;
                     results.push(SyncResult {
                         action: SyncAction::Updated,
                         meeting: updated,
