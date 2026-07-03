@@ -7,9 +7,14 @@ terminal? Well -- here's your answer to that.
 
 ## Installation
 
+If you don't care to have calendar sync functionality, then you can just `cargo install` the app:
+
 ```sh
 cargo install --git https://github.com/fizzizist/reflections.git
 ```
+
+We will be providing pre-compiled binaries in the near future for the calendar syncing. If you want to compile it yourself, you'll need to create
+a `google_secrets.json` file before running `cargo install`.
 
 ## Setup
 
