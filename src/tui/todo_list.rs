@@ -1,7 +1,9 @@
 use super::splash;
+use super::timeline_view::TimelineView;
 use crate::models::todo_item::{TodoItem, TodoStatus};
 use crate::services::note::NoteService;
 use crate::services::reflection::ReflectionService;
+use crate::services::timeline::TimelineService;
 use crate::services::todo::TodoService;
 use crate::tui::editor::EditorFn;
 use crate::tui::input_modal::InputModal;
@@ -26,6 +28,8 @@ pub struct TodoListView {
     reflection_service: ReflectionService,
     editor_fn: EditorFn,
     note_service: NoteService,
+    timeline_service: TimelineService,
+    timeline_view: Option<TimelineView>,
 }
 
 impl TodoListView {
@@ -34,6 +38,7 @@ impl TodoListView {
         reflection_service: ReflectionService,
         editor_fn: EditorFn,
         note_service: NoteService,
+        timeline_service: TimelineService,
     ) -> Self {
         Self {
             items: Vec::new(),
@@ -45,6 +50,8 @@ impl TodoListView {
             reflection_service,
             editor_fn,
             note_service,
+            timeline_service,
+            timeline_view: None,
         }
     }
 
@@ -65,6 +72,13 @@ impl TodoListView {
     }
 
     pub async fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
+        if let Some(timeline) = &mut self.timeline_view {
+            if timeline.handle_key(key) {
+                self.timeline_view = None;
+            }
+            return Ok(false);
+        }
+
         if self.status_modal.is_active() {
             if let Some(status) = self.status_modal.handle_key(key) {
                 if let Some(id) = self.status_modal.target_item_id() {
@@ -140,6 +154,14 @@ impl TodoListView {
                 )
                 .await;
             }
+            KeyCode::Enter
+                if let Some(idx) = self.selected_index
+                    && let Some(item) = self.items.get(idx) =>
+            {
+                let title = format!("Timeline: {}", item.label);
+                self.timeline_view =
+                    Some(TimelineView::open(&self.timeline_service, item.id, &title).await?);
+            }
             _ => {}
         }
 
@@ -147,6 +169,11 @@ impl TodoListView {
     }
 
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
+        if let Some(timeline) = &mut self.timeline_view {
+            timeline.render(frame, area);
+            return;
+        }
+
         let block = Block::default().borders(Borders::ALL).title("TODO List");
         let inner = block.inner(area);
 
@@ -233,7 +260,13 @@ impl TodoListView {
     }
 
     pub fn is_modal_active(&self) -> bool {
-        self.input_modal.is_active() || self.status_modal.is_active()
+        self.timeline_view.is_some()
+            || self.input_modal.is_active()
+            || self.status_modal.is_active()
+    }
+
+    pub fn is_timeline_active(&self) -> bool {
+        self.timeline_view.is_some()
     }
 }
 
@@ -278,5 +311,37 @@ impl TodoListView {
 
     pub fn set_editor_fn(&mut self, f: EditorFn) {
         self.editor_fn = f;
+    }
+
+    pub fn set_timeline_view(&mut self, view: TimelineView) {
+        self.timeline_view = Some(view);
+    }
+
+    pub fn close_timeline(&mut self) {
+        self.timeline_view = None;
+    }
+
+    pub async fn reload_items_for_test(&mut self) -> Result<()> {
+        self.load_items().await
+    }
+
+    pub async fn create_todo_for_test(&mut self, label: &str) -> Result<TodoItem> {
+        let item = self.service.create_todo_item(label).await?;
+        self.load_items().await?;
+        Ok(item)
+    }
+
+    pub async fn create_todo_with_fixed_time_for_test(
+        &mut self,
+        label: &str,
+        id: uuid::Uuid,
+        timestamp: &str,
+    ) -> Result<TodoItem> {
+        let item = self
+            .service
+            .create_todo_with_fixed_time(label, id, timestamp)
+            .await?;
+        self.load_items().await?;
+        Ok(item)
     }
 }

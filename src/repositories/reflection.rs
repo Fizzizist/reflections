@@ -6,6 +6,9 @@ use uuid::Uuid;
 use crate::models::reflection::Reflection;
 use crate::repositories::parse_timestamp;
 
+const SELECT_COLUMNS: &str =
+    "reflection_id, about_id, file_path, created_at, updated_at FROM reflection";
+
 fn row_to_reflection(row: &turso::Row) -> Result<Reflection> {
     let id_str: String = row.get(0)?;
     let id = Uuid::parse_str(&id_str)?;
@@ -28,6 +31,85 @@ fn row_to_reflection(row: &turso::Row) -> Result<Reflection> {
         created_at,
         updated_at,
     })
+}
+
+pub struct ReflectionFilter {
+    pub id: Option<Uuid>,
+    pub about_id: Option<Uuid>,
+}
+
+impl ReflectionFilter {
+    pub fn new() -> Self {
+        Self {
+            id: None,
+            about_id: None,
+        }
+    }
+
+    pub fn id(mut self, id: Uuid) -> Self {
+        self.id = Some(id);
+        self
+    }
+
+    pub fn about_id(mut self, about_id: Uuid) -> Self {
+        self.about_id = Some(about_id);
+        self
+    }
+
+    fn build_where_clause(&self) -> (String, Vec<String>) {
+        let mut conditions = Vec::new();
+        let mut params = Vec::new();
+
+        if let Some(id) = self.id {
+            conditions.push("reflection_id = ?");
+            params.push(id.to_string());
+        }
+        if let Some(about_id) = self.about_id {
+            conditions.push("about_id = ?");
+            params.push(about_id.to_string());
+        }
+
+        let clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", conditions.join(" AND "))
+        };
+
+        (clause, params)
+    }
+}
+
+pub async fn find(conn: &Connection, filter: &ReflectionFilter) -> Result<Vec<Reflection>> {
+    let (where_clause, params) = filter.build_where_clause();
+    let sql = format!(
+        "SELECT {}{} ORDER BY created_at ASC",
+        SELECT_COLUMNS, where_clause
+    );
+
+    let mut rows = conn.query(&sql, params).await?;
+
+    let mut reflections = Vec::new();
+    while let Some(row) = rows.next().await? {
+        reflections.push(row_to_reflection(&row)?);
+    }
+
+    Ok(reflections)
+}
+
+pub async fn find_one(conn: &Connection, filter: &ReflectionFilter) -> Result<Option<Reflection>> {
+    let (where_clause, params) = filter.build_where_clause();
+    let sql = format!(
+        "SELECT {}{} ORDER BY created_at ASC LIMIT 1",
+        SELECT_COLUMNS, where_clause
+    );
+
+    let mut rows = conn.query(&sql, params).await?;
+    let row = rows.next().await?;
+    while rows.next().await.is_ok_and(|r| r.is_some()) {}
+    if let Some(row) = row {
+        return Ok(Some(row_to_reflection(&row)?));
+    }
+    Ok(None)
 }
 
 pub async fn insert(
@@ -91,14 +173,7 @@ pub async fn get_by_id(tx: &Transaction<'_>, id: Uuid) -> Result<Reflection> {
 }
 
 pub async fn find_by_id(conn: &Connection, id: Uuid) -> Result<Option<Reflection>> {
-    let sql = "SELECT reflection_id, about_id, file_path, created_at, updated_at FROM reflection WHERE reflection_id = ?";
-    let mut rows = conn.query(sql, (id.to_string(),)).await?;
-    let row = rows.next().await?;
-    while rows.next().await.is_ok_and(|r| r.is_some()) {}
-    if let Some(row) = row {
-        return Ok(Some(row_to_reflection(&row)?));
-    }
-    Ok(None)
+    find_one(conn, &ReflectionFilter::new().id(id)).await
 }
 
 #[cfg(test)]
@@ -251,5 +326,104 @@ mod tests {
             .expect("find failed");
 
         assert!(found.is_none());
+    }
+
+    #[tokio::test]
+    async fn reflection_filter_by_about_id_returns_linked() {
+        let mut conn = setup().await;
+        let tx = conn.transaction().await.expect("tx begin failed");
+
+        let about_id = Uuid::now_v7();
+        let id1 = Uuid::now_v7();
+        let id2 = Uuid::now_v7();
+        let id3 = Uuid::now_v7();
+
+        insert(&tx, id1, Some(about_id), "/path/to/r1.md")
+            .await
+            .expect("insert r1 failed");
+        insert(&tx, id2, Some(about_id), "/path/to/r2.md")
+            .await
+            .expect("insert r2 failed");
+        insert(&tx, id3, None, "/path/to/r3.md")
+            .await
+            .expect("insert r3 failed");
+
+        tx.commit().await.expect("commit failed");
+
+        let filter = ReflectionFilter::new().about_id(about_id);
+        let reflections = find(&conn, &filter).await.expect("find failed");
+
+        assert_eq!(reflections.len(), 2);
+        assert!(reflections.iter().all(|r| r.about_id == Some(about_id)));
+    }
+
+    #[tokio::test]
+    async fn reflection_filter_by_about_id_excludes_unlinked() {
+        let mut conn = setup().await;
+        let tx = conn.transaction().await.expect("tx begin failed");
+
+        let about_id = Uuid::now_v7();
+        let id1 = Uuid::now_v7();
+        let id2 = Uuid::now_v7();
+
+        insert(&tx, id1, None, "/path/to/r1.md")
+            .await
+            .expect("insert r1 failed");
+        insert(&tx, id2, None, "/path/to/r2.md")
+            .await
+            .expect("insert r2 failed");
+
+        tx.commit().await.expect("commit failed");
+
+        let filter = ReflectionFilter::new().about_id(about_id);
+        let reflections = find(&conn, &filter).await.expect("find failed");
+
+        assert_eq!(reflections.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn reflection_filter_by_id_single_result() {
+        let mut conn = setup().await;
+        let tx = conn.transaction().await.expect("tx begin failed");
+
+        let id = Uuid::now_v7();
+        let inserted = insert(&tx, id, None, "/path/to/reflection.md")
+            .await
+            .expect("insert failed");
+
+        tx.commit().await.expect("commit failed");
+
+        let filter = ReflectionFilter::new().id(id);
+        let reflections = find(&conn, &filter).await.expect("find failed");
+
+        assert_eq!(reflections.len(), 1);
+        assert_eq!(reflections[0].id, inserted.id);
+    }
+
+    #[tokio::test]
+    async fn reflection_filter_empty_returns_all() {
+        let mut conn = setup().await;
+        let tx = conn.transaction().await.expect("tx begin failed");
+
+        let id1 = Uuid::now_v7();
+        let id2 = Uuid::now_v7();
+        let id3 = Uuid::now_v7();
+
+        insert(&tx, id1, None, "/path/to/r1.md")
+            .await
+            .expect("insert r1 failed");
+        insert(&tx, id2, None, "/path/to/r2.md")
+            .await
+            .expect("insert r2 failed");
+        insert(&tx, id3, None, "/path/to/r3.md")
+            .await
+            .expect("insert r3 failed");
+
+        tx.commit().await.expect("commit failed");
+
+        let filter = ReflectionFilter::new();
+        let reflections = find(&conn, &filter).await.expect("find failed");
+
+        assert_eq!(reflections.len(), 3);
     }
 }

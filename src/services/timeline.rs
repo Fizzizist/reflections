@@ -13,7 +13,10 @@ use crate::models::reflection::Reflection;
 use crate::models::summary::Summary;
 use crate::models::todo_item::TodoItem;
 use crate::repositories;
+use crate::repositories::event::EventFilter;
 use crate::repositories::meeting::MeetingFilter;
+use crate::repositories::note::NoteFilter;
+use crate::repositories::reflection::ReflectionFilter;
 use crate::services::editable::EditableEntityRecord;
 
 #[derive(Serialize)]
@@ -58,6 +61,7 @@ pub struct SummaryWithContent {
     pub content: Option<String>,
 }
 
+#[derive(Clone)]
 pub struct TimelineService {
     conn: Connection,
     root_dir: PathBuf,
@@ -74,6 +78,53 @@ impl TimelineService {
         end: DateTime<Utc>,
     ) -> Result<Vec<TimelineEntry>> {
         let events = repositories::event::list_by_date_range(&self.conn, start, end).await?;
+        let mut entries = Vec::new();
+        for event in events {
+            let entity = self.resolve_entity(&event).await.unwrap_or(None);
+            entries.push(TimelineEntry {
+                event_id: event.event_id,
+                entity_id: event.entity_id,
+                event_type: event.event_type,
+                metadata: event.metadata,
+                created_at: event.created_at,
+                updated_at: event.updated_at,
+                entity,
+            });
+        }
+        Ok(entries)
+    }
+
+    #[allow(dead_code)]
+    pub async fn get_entity_timeline(&self, entity_id: Uuid) -> Result<Vec<TimelineEntry>> {
+        let mut events =
+            repositories::event::find(&self.conn, &EventFilter::new().entity_id(entity_id)).await?;
+
+        let linked_reflections = repositories::reflection::find(
+            &self.conn,
+            &ReflectionFilter::new().about_id(entity_id),
+        )
+        .await?;
+
+        for reflection in &linked_reflections {
+            let reflection_events =
+                repositories::event::find(&self.conn, &EventFilter::new().entity_id(reflection.id))
+                    .await?;
+            events.extend(reflection_events);
+        }
+
+        let linked_notes =
+            repositories::note::find(&self.conn, &NoteFilter::new().related_to_id(entity_id))
+                .await?;
+
+        for note in &linked_notes {
+            let note_events =
+                repositories::event::find(&self.conn, &EventFilter::new().entity_id(note.id))
+                    .await?;
+            events.extend(note_events);
+        }
+
+        events.sort_by_key(|a| a.created_at);
+
         let mut entries = Vec::new();
         for event in events {
             let entity = self.resolve_entity(&event).await.unwrap_or(None);
@@ -595,5 +646,240 @@ mod tests {
         }
 
         assert!(found_summary, "should find summary with content");
+    }
+
+    #[tokio::test]
+    async fn get_entity_timeline_returns_direct_events_for_todo() {
+        let (svc, conn, _root_path, _root_dir) = setup().await;
+
+        let mut todo_svc = TodoService::new(conn.clone());
+        let todo = todo_svc
+            .create_todo_item("test todo")
+            .await
+            .expect("create todo failed");
+
+        let entries = svc
+            .get_entity_timeline(todo.id)
+            .await
+            .expect("get_entity_timeline failed");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].event_type, EventType::TodoItemCreated);
+        assert_eq!(entries[0].entity_id, todo.id);
+        assert!(
+            matches!(&entries[0].entity, Some(TimelineEntity::TodoItem(item)) if item.id == todo.id)
+        );
+    }
+
+    #[tokio::test]
+    async fn get_entity_timeline_includes_linked_reflections() {
+        let (svc, conn, root_path, _root_dir) = setup().await;
+
+        let mut todo_svc = TodoService::new(conn.clone());
+        let todo = todo_svc
+            .create_todo_item("test todo")
+            .await
+            .expect("create todo failed");
+
+        let mut reflection_svc = ReflectionService::new(conn.clone(), root_path.clone());
+        let _reflection = reflection_svc
+            .create_reflection(Some(todo.id))
+            .await
+            .expect("create reflection failed");
+
+        let entries = svc
+            .get_entity_timeline(todo.id)
+            .await
+            .expect("get_entity_timeline failed");
+
+        assert_eq!(entries.len(), 2);
+        let mut found_todo_created = false;
+        let mut found_reflection_created = false;
+
+        for entry in &entries {
+            if entry.event_type == EventType::TodoItemCreated && entry.entity_id == todo.id {
+                found_todo_created = true;
+            }
+            if entry.event_type == EventType::ReflectionCreated {
+                found_reflection_created = true;
+            }
+        }
+
+        assert!(found_todo_created, "should find TodoItemCreated event");
+        assert!(
+            found_reflection_created,
+            "should find ReflectionCreated event"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_entity_timeline_includes_linked_notes() {
+        let (svc, conn, root_path, _root_dir) = setup().await;
+
+        let mut todo_svc = TodoService::new(conn.clone());
+        let todo = todo_svc
+            .create_todo_item("test todo")
+            .await
+            .expect("create todo failed");
+
+        let mut note_svc = NoteService::new(conn.clone(), root_path.clone());
+        let _note = note_svc
+            .create_note(Some(todo.id))
+            .await
+            .expect("create note failed");
+
+        let entries = svc
+            .get_entity_timeline(todo.id)
+            .await
+            .expect("get_entity_timeline failed");
+
+        assert_eq!(entries.len(), 2);
+        let mut found_todo_created = false;
+        let mut found_note_created = false;
+
+        for entry in &entries {
+            if entry.event_type == EventType::TodoItemCreated && entry.entity_id == todo.id {
+                found_todo_created = true;
+            }
+            if entry.event_type == EventType::NoteCreated {
+                found_note_created = true;
+            }
+        }
+
+        assert!(found_todo_created, "should find TodoItemCreated event");
+        assert!(found_note_created, "should find NoteCreated event");
+    }
+
+    #[tokio::test]
+    async fn get_entity_timeline_includes_file_content_for_linked() {
+        let (svc, conn, root_path, _root_dir) = setup().await;
+
+        let mut todo_svc = TodoService::new(conn.clone());
+        let todo = todo_svc
+            .create_todo_item("test todo")
+            .await
+            .expect("create todo failed");
+
+        let mut reflection_svc = ReflectionService::new(conn.clone(), root_path.clone());
+        let reflection = reflection_svc
+            .create_reflection(Some(todo.id))
+            .await
+            .expect("create reflection failed");
+
+        let full_path = root_path.join(&reflection.file_path);
+        fs::write(&full_path, "reflection content")
+            .await
+            .expect("write failed");
+
+        let entries = svc
+            .get_entity_timeline(todo.id)
+            .await
+            .expect("get_entity_timeline failed");
+
+        let mut found_reflection_with_content = false;
+        for entry in &entries {
+            if let Some(TimelineEntity::Reflection(r)) = &entry.entity {
+                if r.reflection.id == reflection.id {
+                    found_reflection_with_content = true;
+                    assert_eq!(r.content, Some("reflection content".to_string()));
+                }
+            }
+        }
+
+        assert!(
+            found_reflection_with_content,
+            "should find reflection with file content"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_entity_timeline_for_nonexistent_entity_returns_empty() {
+        let (svc, _conn, _root_path, _root_dir) = setup().await;
+
+        let nonexistent = Uuid::now_v7();
+        let entries = svc
+            .get_entity_timeline(nonexistent)
+            .await
+            .expect("get_entity_timeline failed");
+
+        assert_eq!(entries.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn get_entity_timeline_orders_oldest_first() {
+        let (svc, conn, _root_path, _root_dir) = setup().await;
+
+        let mut todo_svc = TodoService::new(conn.clone());
+        let todo = todo_svc
+            .create_todo_item("test todo")
+            .await
+            .expect("create todo failed");
+
+        todo_svc
+            .update_todo_status(todo.id, crate::models::todo_item::TodoStatus::InProgress)
+            .await
+            .expect("update status failed");
+
+        let entries = svc
+            .get_entity_timeline(todo.id)
+            .await
+            .expect("get_entity_timeline failed");
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].event_type, EventType::TodoItemCreated);
+        assert_eq!(entries[1].event_type, EventType::TodoItemStatusChanged);
+        assert!(entries[0].created_at <= entries[1].created_at);
+    }
+
+    #[tokio::test]
+    async fn get_entity_timeline_for_meeting() {
+        let (svc, conn, root_path, _root_dir) = setup().await;
+
+        let mut meeting_svc = MeetingService::new(conn.clone());
+        let meeting = meeting_svc
+            .create_meeting("test meeting", Utc::now())
+            .await
+            .expect("create meeting failed");
+
+        let mut reflection_svc = ReflectionService::new(conn.clone(), root_path.clone());
+        let _reflection = reflection_svc
+            .create_reflection(Some(meeting.id))
+            .await
+            .expect("create reflection failed");
+
+        let mut note_svc = NoteService::new(conn.clone(), root_path.clone());
+        let _note = note_svc
+            .create_note(Some(meeting.id))
+            .await
+            .expect("create note failed");
+
+        let entries = svc
+            .get_entity_timeline(meeting.id)
+            .await
+            .expect("get_entity_timeline failed");
+
+        assert_eq!(entries.len(), 3);
+        let mut found_meeting_created = false;
+        let mut found_reflection_created = false;
+        let mut found_note_created = false;
+
+        for entry in &entries {
+            if entry.event_type == EventType::MeetingCreated && entry.entity_id == meeting.id {
+                found_meeting_created = true;
+            }
+            if entry.event_type == EventType::ReflectionCreated {
+                found_reflection_created = true;
+            }
+            if entry.event_type == EventType::NoteCreated {
+                found_note_created = true;
+            }
+        }
+
+        assert!(found_meeting_created, "should find MeetingCreated event");
+        assert!(
+            found_reflection_created,
+            "should find ReflectionCreated event"
+        );
+        assert!(found_note_created, "should find NoteCreated event");
     }
 }

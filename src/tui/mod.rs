@@ -1,5 +1,6 @@
 mod app;
 mod editor;
+mod highlight;
 mod input_box;
 mod input_modal;
 mod meeting_modal;
@@ -7,5 +8,6 @@ mod meetings_view;
 mod reflections_view;
 mod splash;
 mod status_modal;
+mod timeline_view;
 mod todo_list;
 pub use app::run;

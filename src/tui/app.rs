@@ -1,6 +1,7 @@
 use crate::services::meeting::MeetingService;
 use crate::services::note::NoteService;
 use crate::services::reflection::ReflectionService;
+use crate::services::timeline::TimelineService;
 use crate::services::todo::TodoService;
 use crate::tui::editor::EditorFn;
 
@@ -49,19 +50,22 @@ impl App {
         let todo_service = TodoService::new(conn.clone());
         let meeting_service = MeetingService::new(conn.clone());
         let note_service = NoteService::new(conn.clone(), root_dir.clone());
-        let reflection_service = ReflectionService::new(conn, root_dir);
+        let reflection_service = ReflectionService::new(conn.clone(), root_dir.clone());
+        let timeline_service = TimelineService::new(conn, root_dir);
         Self {
             todo_list_view: TodoListView::new(
                 todo_service,
                 reflection_service.clone(),
                 editor_fn.clone(),
                 note_service.clone(),
+                timeline_service.clone(),
             ),
             meetings_view: MeetingsView::new(
                 meeting_service,
                 reflection_service.clone(),
                 editor_fn.clone(),
                 note_service.clone(),
+                timeline_service.clone(),
             ),
             reflections_view: ReflectionsView::new(reflection_service.clone()),
             reflection_service,
@@ -190,15 +194,27 @@ pub fn render_app(app: &mut App, frame: &mut ratatui::Frame) {
     use ratatui::layout::{Constraint, Layout};
     use ratatui::widgets::Tabs;
 
-    let chunks = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(frame.area());
+    let timeline_active = match app.active_tab {
+        Tab::TodoList => app.todo_list_view.is_timeline_active(),
+        Tab::Meetings => app.meetings_view.is_timeline_active(),
+        Tab::Reflections => false,
+    };
 
-    let tab_titles = vec!["Todo List", "Meetings", "Reflections"];
-    let tabs = Tabs::new(tab_titles)
-        .select(app.active_tab as usize)
-        .highlight_style(ratatui::style::Style::default().reversed());
-    frame.render_widget(tabs, chunks[0]);
+    let view_area = if timeline_active {
+        frame.area()
+    } else {
+        let chunks =
+            Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(frame.area());
 
-    let view_area = chunks[1];
+        let tab_titles = vec!["Todo List", "Meetings", "Reflections"];
+        let tabs = Tabs::new(tab_titles)
+            .select(app.active_tab as usize)
+            .highlight_style(ratatui::style::Style::default().reversed());
+        frame.render_widget(tabs, chunks[0]);
+
+        chunks[1]
+    };
+
     match app.active_tab {
         Tab::TodoList => app.todo_list_view.render(frame, view_area),
         Tab::Meetings => app.meetings_view.render(frame, view_area),
@@ -984,5 +1000,160 @@ mod tests {
 
         let note_count = app.note_service.note_count().await;
         assert_eq!(note_count, 0);
+    }
+
+    #[tokio::test]
+    async fn enter_opens_timeline_from_todo_list() {
+        let mut app = test_app().await;
+        app.init().await.expect("init failed");
+
+        app.todo_list_view
+            .create_todo_for_test("timeline test todo")
+            .await
+            .expect("create todo failed");
+        app.todo_list_view.set_selected_index(0);
+
+        let key_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        app.handle_key(key_enter).await.expect("handle_key failed");
+
+        assert!(
+            app.todo_list_view.is_timeline_active(),
+            "timeline should be active after Enter"
+        );
+    }
+
+    #[tokio::test]
+    async fn enter_opens_timeline_from_meetings_view() {
+        let mut app = test_app().await;
+        app.init().await.expect("init failed");
+        app.active_tab = Tab::Meetings;
+
+        app.meetings_view
+            .create_meeting_for_test("timeline test meeting", Utc::now())
+            .await
+            .expect("create meeting failed");
+        app.meetings_view.set_selected_index(0);
+
+        let key_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        app.handle_key(key_enter).await.expect("handle_key failed");
+
+        assert!(
+            app.meetings_view.is_timeline_active(),
+            "timeline should be active after Enter"
+        );
+    }
+
+    #[tokio::test]
+    async fn esc_closes_timeline_returns_to_todo_list() {
+        let mut app = test_app().await;
+        app.init().await.expect("init failed");
+
+        app.todo_list_view.set_items(vec![fixed_item("test item")]);
+        app.todo_list_view.set_selected_index(0);
+        app.todo_list_view.set_timeline_view(
+            super::super::timeline_view::TimelineView::new_for_test(vec![], "Test"),
+        );
+
+        assert!(app.todo_list_view.is_timeline_active());
+
+        let key_esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        app.handle_key(key_esc).await.expect("handle_key failed");
+
+        assert!(
+            !app.todo_list_view.is_timeline_active(),
+            "timeline should be closed after Esc"
+        );
+    }
+
+    #[tokio::test]
+    async fn q_closes_timeline_returns_to_meetings_view() {
+        let mut app = test_app().await;
+        app.init().await.expect("init failed");
+        app.active_tab = Tab::Meetings;
+
+        app.meetings_view.set_items(vec![fixed_meeting("Standup")]);
+        app.meetings_view.set_selected_index(0);
+        app.meetings_view.set_timeline_view(
+            super::super::timeline_view::TimelineView::new_for_test(vec![], "Test"),
+        );
+
+        assert!(app.meetings_view.is_timeline_active());
+
+        let key_q = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
+        app.handle_key(key_q).await.expect("handle_key failed");
+
+        assert!(
+            !app.meetings_view.is_timeline_active(),
+            "timeline should be closed after q"
+        );
+    }
+
+    #[tokio::test]
+    async fn timeline_blocks_tab_switch() {
+        let mut app = test_app().await;
+        app.init().await.expect("init failed");
+
+        app.todo_list_view.set_items(vec![fixed_item("test item")]);
+        app.todo_list_view.set_selected_index(0);
+        app.todo_list_view.set_timeline_view(
+            super::super::timeline_view::TimelineView::new_for_test(vec![], "Test"),
+        );
+
+        let key_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
+        let key_t = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE);
+        app.handle_key(key_g).await.expect("handle_key failed");
+        app.handle_key(key_t).await.expect("handle_key failed");
+
+        assert!(
+            matches!(app.active_tab, Tab::TodoList),
+            "tab should not switch while timeline is active"
+        );
+        assert!(app.todo_list_view.is_timeline_active());
+    }
+
+    #[tokio::test]
+    async fn timeline_render_in_app() {
+        let mut app = test_app().await;
+        app.init().await.expect("init failed");
+
+        let fixed_time = chrono::DateTime::parse_from_rfc3339("2024-01-15T10:30:00Z")
+            .expect("parse failed")
+            .with_timezone(&Utc);
+        let todo_id = Uuid::now_v7();
+        let ts = fixed_time.to_rfc3339();
+        app.todo_list_view
+            .create_todo_with_fixed_time_for_test("snapshot todo", todo_id, &ts)
+            .await
+            .expect("create todo failed");
+        app.todo_list_view.set_selected_index(0);
+
+        let key_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        app.handle_key(key_enter).await.expect("handle_key failed");
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("terminal creation");
+        terminal
+            .draw(|frame| render_app(&mut app, frame))
+            .expect("failed to draw");
+        insta::assert_snapshot!("timeline in app", terminal.backend());
+    }
+
+    #[tokio::test]
+    async fn timeline_empty_render_in_app() {
+        let mut app = test_app().await;
+        app.init().await.expect("init failed");
+
+        app.todo_list_view.set_items(vec![fixed_item("test item")]);
+        app.todo_list_view.set_selected_index(0);
+        app.todo_list_view.set_timeline_view(
+            super::super::timeline_view::TimelineView::new_for_test(vec![], "Timeline: test item"),
+        );
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("terminal creation");
+        terminal
+            .draw(|frame| render_app(&mut app, frame))
+            .expect("failed to draw");
+        insta::assert_snapshot!("timeline empty in app", terminal.backend());
     }
 }

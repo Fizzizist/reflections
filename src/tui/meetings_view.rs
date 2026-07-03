@@ -1,8 +1,10 @@
 use super::meeting_modal::MeetingModal;
+use super::timeline_view::TimelineView;
 use crate::models::meeting::Meeting;
 use crate::services::meeting::MeetingService;
 use crate::services::note::NoteService;
 use crate::services::reflection::ReflectionService;
+use crate::services::timeline::TimelineService;
 use crate::tui::editor::EditorFn;
 use anyhow::Result;
 use chrono::Local;
@@ -22,6 +24,8 @@ pub struct MeetingsView {
     reflection_service: ReflectionService,
     editor_fn: EditorFn,
     note_service: NoteService,
+    timeline_service: TimelineService,
+    timeline_view: Option<TimelineView>,
 }
 
 impl MeetingsView {
@@ -30,6 +34,7 @@ impl MeetingsView {
         reflection_service: ReflectionService,
         editor_fn: EditorFn,
         note_service: NoteService,
+        timeline_service: TimelineService,
     ) -> Self {
         Self {
             items: Vec::new(),
@@ -39,6 +44,8 @@ impl MeetingsView {
             reflection_service,
             editor_fn,
             note_service,
+            timeline_service,
+            timeline_view: None,
         }
     }
 
@@ -59,6 +66,13 @@ impl MeetingsView {
     }
 
     pub async fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
+        if let Some(timeline) = &mut self.timeline_view {
+            if timeline.handle_key(key) {
+                self.timeline_view = None;
+            }
+            return Ok(false);
+        }
+
         if self.meeting_modal.is_active() {
             if let Some((name, scheduled_at)) = self.meeting_modal.handle_key(key) {
                 if let Err(e) = self.service.create_meeting(&name, scheduled_at).await {
@@ -113,6 +127,14 @@ impl MeetingsView {
                 )
                 .await;
             }
+            KeyCode::Enter
+                if let Some(idx) = self.selected_index
+                    && let Some(item) = self.items.get(idx) =>
+            {
+                let title = format!("Timeline: {}", item.name);
+                self.timeline_view =
+                    Some(TimelineView::open(&self.timeline_service, item.id, &title).await?);
+            }
             _ => {}
         }
 
@@ -120,6 +142,11 @@ impl MeetingsView {
     }
 
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
+        if let Some(timeline) = &mut self.timeline_view {
+            timeline.render(frame, area);
+            return;
+        }
+
         let block = Block::default().borders(Borders::ALL).title("Meetings");
         let inner = block.inner(area);
 
@@ -188,7 +215,11 @@ impl MeetingsView {
     }
 
     pub fn is_modal_active(&self) -> bool {
-        self.meeting_modal.is_active()
+        self.timeline_view.is_some() || self.meeting_modal.is_active()
+    }
+
+    pub fn is_timeline_active(&self) -> bool {
+        self.timeline_view.is_some()
     }
 }
 
@@ -228,5 +259,27 @@ impl MeetingsView {
 
     pub fn set_editor_fn(&mut self, f: EditorFn) {
         self.editor_fn = f;
+    }
+
+    pub fn set_timeline_view(&mut self, view: TimelineView) {
+        self.timeline_view = Some(view);
+    }
+
+    pub fn close_timeline(&mut self) {
+        self.timeline_view = None;
+    }
+
+    pub async fn reload_items_for_test(&mut self) -> Result<()> {
+        self.load_items().await
+    }
+
+    pub async fn create_meeting_for_test(
+        &mut self,
+        name: &str,
+        scheduled_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Meeting> {
+        let meeting = self.service.create_meeting(name, scheduled_at).await?;
+        self.load_items().await?;
+        Ok(meeting)
     }
 }

@@ -352,3 +352,30 @@ mod tests {
         assert_eq!(back_to_new.status, TodoStatus::New);
     }
 }
+
+#[cfg(test)]
+impl TodoService {
+    pub async fn create_todo_with_fixed_time(
+        &mut self,
+        label: &str,
+        id: Uuid,
+        timestamp: &str,
+    ) -> Result<TodoItem> {
+        let tx = self.conn.transaction().await?;
+        tx.execute(
+            "INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at) VALUES (?, ?, 'NEW', ?, ?)",
+            (id.to_string(), label.to_string(), timestamp.to_string(), timestamp.to_string()),
+        )
+        .await?;
+        tx.execute(
+            "INSERT INTO event (event_id, entity_id, event_type, metadata, created_at, updated_at) VALUES (?, ?, 'TODO_ITEM_CREATED', '{}', ?, ?)",
+            (Uuid::now_v7().to_string(), id.to_string(), timestamp.to_string(), timestamp.to_string()),
+        )
+        .await?;
+        tx.commit().await?;
+        let item = repositories::todo_item::find_by_id(&self.conn, id)
+            .await?
+            .expect("todo should exist after insert");
+        Ok(item)
+    }
+}
