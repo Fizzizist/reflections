@@ -8,6 +8,7 @@ use uuid::Uuid;
 use crate::models::event::EventType;
 use crate::models::reflection::Reflection;
 use crate::repositories;
+use crate::repositories::meeting::MeetingFilter;
 use crate::services::editable::EditableEntity;
 use crate::services::tag;
 
@@ -90,7 +91,10 @@ impl ReflectionService {
                 if let Some(item) = repositories::todo_item::find_by_id(&self.conn, id).await? {
                     return Ok(format!("TODO Item Reflection {}", item.label));
                 }
-                if let Some(meeting) = repositories::meeting::find_by_id(&self.conn, id).await? {
+                if let Some(meeting) =
+                    repositories::meeting::find_one(&self.conn, &MeetingFilter::new().id(id))
+                        .await?
+                {
                     return Ok(format!("Meeting Reflection {}", meeting.name));
                 }
                 Ok(format!(

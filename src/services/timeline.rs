@@ -13,6 +13,7 @@ use crate::models::reflection::Reflection;
 use crate::models::summary::Summary;
 use crate::models::todo_item::TodoItem;
 use crate::repositories;
+use crate::repositories::meeting::MeetingFilter;
 use crate::services::editable::EditableEntityRecord;
 
 #[derive(Serialize)]
@@ -96,8 +97,11 @@ impl TimelineService {
                 Ok(item.map(TimelineEntity::TodoItem))
             }
             EventType::MeetingCreated => {
-                let meeting =
-                    repositories::meeting::find_by_id(&self.conn, event.entity_id).await?;
+                let meeting = repositories::meeting::find_one(
+                    &self.conn,
+                    &MeetingFilter::new().id(event.entity_id),
+                )
+                .await?;
                 Ok(meeting.map(TimelineEntity::Meeting))
             }
             EventType::ReflectionCreated => {
@@ -339,11 +343,11 @@ mod tests {
 
         let mut found_reflection = false;
         for entry in &entries {
-            if let Some(TimelineEntity::Reflection(r)) = &entry.entity {
-                if r.reflection.id == reflection.id {
-                    found_reflection = true;
-                    assert_eq!(r.content, None);
-                }
+            if let Some(TimelineEntity::Reflection(r)) = &entry.entity
+                && r.reflection.id == reflection.id
+            {
+                found_reflection = true;
+                assert_eq!(r.content, None);
             }
         }
 
@@ -581,12 +585,12 @@ mod tests {
 
         let mut found_summary = false;
         for entry in &entries {
-            if entry.event_type == EventType::SummaryCreated {
-                if let Some(TimelineEntity::Summary(s)) = &entry.entity {
-                    found_summary = true;
-                    assert_eq!(s.summary.id, summary_id);
-                    assert_eq!(s.content, Some("summary content".to_string()));
-                }
+            if entry.event_type == EventType::SummaryCreated
+                && let Some(TimelineEntity::Summary(s)) = &entry.entity
+            {
+                found_summary = true;
+                assert_eq!(s.summary.id, summary_id);
+                assert_eq!(s.content, Some("summary content".to_string()));
             }
         }
 

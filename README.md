@@ -7,14 +7,26 @@ terminal? Well -- here's your answer to that.
 
 ## Installation
 
+If you don't care to have calendar sync functionality, then you can just `cargo install` the app:
+
 ```sh
 cargo install --git https://github.com/fizzizist/reflections.git
 ```
+
+We will be providing pre-compiled binaries in the near future for the calendar syncing. If you want to compile it yourself, you'll need to create
+a `google_secrets.json` file before running `cargo install`.
 
 ## Setup
 
 If you don't use Neovim you might want to set the `EDITOR` env var so that the app knows what editor
 to open when you make a note.
+
+Google Calendar sync requires OAuth credentials provided at build time via a `google_secrets.json`
+file at the project root containing `client_id` and `client_secret` fields. The developer (not the
+end user) creates an OAuth 2.0 Desktop app client in the Google Cloud Console and places the
+credentials in this file. Tokens are cached per-user at `~/.config/reflections/token.json`. See
+[Google's OAuth desktop app documentation](https://developers.google.com/identity/protocols/oauth2/native-app)
+for creating credentials.
 
 ## Controls
 
@@ -40,6 +52,12 @@ of what the user did for that time period.
 - `summary create <start> <end>` -- create a summary by piping markdown content via stdin
   - `echo "content" | reflect summary create 2026-06-30 2026-07-06`
   - Timestamps use the same format as `timeline`
+- `meeting sync <start> <end>` -- sync meetings from Google Calendar into the local database
+  - `reflect meeting sync today`
+  - `reflect meeting sync week`
+  - `reflect meeting sync <start> <end>` (format: `%Y-%m-%d` or `%Y-%m-%d %H:%M`)
+  - Meeting matching is by name within the time range; existing meetings with the same name but a different time are updated
+  - Outputs created/updated meetings as JSON
 
 ## Tags
 

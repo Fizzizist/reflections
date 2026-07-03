@@ -143,16 +143,8 @@ impl ReflectionsView {
         self.labels = (0..self.items.len()).map(|_| String::new()).collect();
     }
 
-    pub fn set_selected_index(&mut self, idx: usize) {
-        self.selected_index = Some(idx);
-    }
-
     pub fn selected_index(&self) -> Option<usize> {
         self.selected_index
-    }
-
-    pub fn clamp_selected_index_for_test(&mut self) {
-        self.clamp_selected_index();
     }
 }
 

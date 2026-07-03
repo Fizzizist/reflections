@@ -224,7 +224,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_by_date_range_empty() {
-        let mut conn = setup().await;
+        let conn = setup().await;
 
         let start = Utc::now() - Duration::hours(1);
         let end = Utc::now() + Duration::hours(1);

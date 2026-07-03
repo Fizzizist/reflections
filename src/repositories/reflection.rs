@@ -243,7 +243,7 @@ mod tests {
 
     #[tokio::test]
     async fn find_by_id_returns_none_when_not_found() {
-        let mut conn = setup().await;
+        let conn = setup().await;
 
         let nonexistent = Uuid::now_v7();
         let found = super::find_by_id(&conn, nonexistent)
