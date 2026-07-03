@@ -1,5 +1,7 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use tokio::fs::{self, create_dir_all};
 use turso::Connection;
@@ -58,6 +60,18 @@ impl SummaryService {
 
     pub fn full_path(&self, file_path: &str) -> PathBuf {
         self.root_dir.join(file_path)
+    }
+
+    pub async fn list_summaries(&self) -> Result<Vec<Summary>> {
+        repositories::summary::list_summaries(&self.conn).await
+    }
+
+    pub async fn get_title(&self, summary: &Summary) -> Result<String> {
+        let file = File::open(self.root_dir.join(&summary.file_path))?;
+        let mut reader = BufReader::new(file);
+        let mut title = String::new();
+        reader.read_line(&mut title)?;
+        Ok(title)
     }
 }
 

@@ -7,5 +7,6 @@ mod meetings_view;
 mod reflections_view;
 mod splash;
 mod status_modal;
+mod summaries_view;
 mod todo_list;
 pub use app::run;
