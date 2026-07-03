@@ -2,11 +2,13 @@ use crate::services::meeting::MeetingService;
 use crate::services::note::NoteService;
 use crate::services::reflection::ReflectionService;
 use crate::services::timeline::TimelineService;
+use crate::services::summary::SummaryService;
 use crate::services::todo::TodoService;
 use crate::tui::editor::EditorFn;
 
 use super::meetings_view::MeetingsView;
 use super::reflections_view::ReflectionsView;
+use super::summaries_view::SummariesView;
 use super::todo_list::TodoListView;
 use anyhow::Result;
 use futures::stream::StreamExt;
@@ -29,14 +31,21 @@ enum Tab {
     TodoList,
     Meetings,
     Reflections,
+    Summaries,
 }
 
-const TABS: [Tab; 3] = [Tab::TodoList, Tab::Meetings, Tab::Reflections];
+const TABS: [Tab; 4] = [
+    Tab::TodoList,
+    Tab::Meetings,
+    Tab::Reflections,
+    Tab::Summaries,
+];
 
 pub struct App {
     todo_list_view: TodoListView,
     meetings_view: MeetingsView,
     reflections_view: ReflectionsView,
+    summaries_view: SummariesView,
     reflection_service: ReflectionService,
     note_service: NoteService,
     editor_fn: EditorFn,
@@ -51,7 +60,8 @@ impl App {
         let meeting_service = MeetingService::new(conn.clone());
         let note_service = NoteService::new(conn.clone(), root_dir.clone());
         let reflection_service = ReflectionService::new(conn.clone(), root_dir.clone());
-        let timeline_service = TimelineService::new(conn, root_dir);
+        let timeline_service = TimelineService::new(conn.clone(), root_dir.clone());
+        let summary_service = SummaryService::new(conn, root_dir);
         Self {
             todo_list_view: TodoListView::new(
                 todo_service,
@@ -68,6 +78,7 @@ impl App {
                 timeline_service.clone(),
             ),
             reflections_view: ReflectionsView::new(reflection_service.clone()),
+            summaries_view: SummariesView::new(summary_service.clone()),
             reflection_service,
             note_service,
             editor_fn,
@@ -80,6 +91,7 @@ impl App {
         self.todo_list_view.init().await?;
         self.meetings_view.init().await?;
         self.reflections_view.init().await?;
+        self.summaries_view.init().await?;
         Ok(())
     }
 
@@ -100,11 +112,19 @@ impl App {
         self.delegate_to_tab(key).await
     }
 
+    async fn set_tab(&mut self, tab: Tab) {
+        self.active_tab = tab;
+        let _ = match tab {
+            Tab::Summaries => self.summaries_view.refresh().await,
+            _ => Ok(()),
+        };
+    }
+
     async fn handle_g_prefix(&mut self, key: KeyEvent) -> Result<bool> {
         self.pending_g_prefix = false;
         match key.code {
             KeyCode::Char('t') => {
-                self.active_tab = self.next_tab();
+                self.set_tab(self.next_tab()).await;
             }
             KeyCode::Char('T') => {
                 self.active_tab = self.prev_tab();
@@ -149,6 +169,7 @@ impl App {
             Tab::TodoList => self.todo_list_view.handle_key(key).await?,
             Tab::Meetings => self.meetings_view.handle_key(key).await?,
             Tab::Reflections => self.reflections_view.handle_key(key).await?,
+            Tab::Summaries => self.summaries_view.handle_key(key).await?,
         };
         if needs_clear {
             self.reflections_view.refresh().await?;
@@ -171,6 +192,7 @@ impl App {
             Tab::TodoList => self.todo_list_view.is_modal_active(),
             Tab::Meetings => self.meetings_view.is_modal_active(),
             Tab::Reflections => self.reflections_view.is_modal_active(),
+            Tab::Summaries => self.summaries_view.is_modal_active(),
         }
     }
 }
@@ -206,7 +228,7 @@ pub fn render_app(app: &mut App, frame: &mut ratatui::Frame) {
         let chunks =
             Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(frame.area());
 
-        let tab_titles = vec!["Todo List", "Meetings", "Reflections"];
+        let tab_titles = vec!["Todo List", "Meetings", "Reflections", "Summaries"];
         let tabs = Tabs::new(tab_titles)
             .select(app.active_tab as usize)
             .highlight_style(ratatui::style::Style::default().reversed());
@@ -219,6 +241,7 @@ pub fn render_app(app: &mut App, frame: &mut ratatui::Frame) {
         Tab::TodoList => app.todo_list_view.render(frame, view_area),
         Tab::Meetings => app.meetings_view.render(frame, view_area),
         Tab::Reflections => app.reflections_view.render(frame, view_area),
+        Tab::Summaries => app.summaries_view.render(frame, view_area),
     }
 }
 
@@ -692,6 +715,10 @@ mod tests {
 
         app.handle_key(key_g).await.expect("handle_key failed");
         app.handle_key(key_t).await.expect("handle_key failed");
+        assert!(matches!(app.active_tab, Tab::Summaries));
+
+        app.handle_key(key_g).await.expect("handle_key failed");
+        app.handle_key(key_t).await.expect("handle_key failed");
         assert!(matches!(app.active_tab, Tab::TodoList));
 
         app.handle_key(key_g).await.expect("handle_key failed");
@@ -734,9 +761,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gt_wraps_from_reflections_to_todo() {
+    async fn gt_wraps_from_summaries_to_todo() {
         let mut app = test_app().await;
-        app.active_tab = Tab::Reflections;
+        app.active_tab = Tab::Summaries;
         let key_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
         let key_t = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE);
         app.handle_key(key_g).await.expect("handle_key failed");
@@ -786,6 +813,10 @@ mod tests {
         app.handle_key(key_g).await.expect("handle_key failed");
         app.handle_key(key_t).await.expect("handle_key failed");
         assert!(matches!(app.active_tab, Tab::Reflections));
+
+        app.handle_key(key_g).await.expect("handle_key failed");
+        app.handle_key(key_t).await.expect("handle_key failed");
+        assert!(matches!(app.active_tab, Tab::Summaries));
 
         app.handle_key(key_g).await.expect("handle_key failed");
         app.handle_key(key_t).await.expect("handle_key failed");

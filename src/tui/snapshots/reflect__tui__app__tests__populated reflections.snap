@@ -2,7 +2,7 @@
 source: src/tui/app.rs
 expression: terminal.backend()
 ---
-" Todo List │ Meetings │ Reflections                                             "
+" Todo List │ Meetings │ Reflections │ Summaries                                 "
 "┌Reflections───────────────────────────────────────────────────────────────────┐"
 "│Label                                                       Updated           │"
 "│General Reflection 2024-01-15 10:30                         2024-01-15 10:30  │"

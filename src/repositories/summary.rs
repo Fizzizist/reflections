@@ -74,6 +74,17 @@ pub async fn insert(
     Err(QueryReturnedNoRows.into())
 }
 
+pub async fn list_summaries(conn: &Connection) -> Result<Vec<Summary>> {
+    let sql = "SELECT summary_id, file_path, start, \"end\", created_at, updated_at FROM summary ORDER BY created_at DESC;";
+    let mut rows = conn.query(sql, ()).await?;
+
+    let mut summaries = Vec::new();
+    while let Some(row) = rows.next().await? {
+        summaries.push(row_to_summary(&row)?);
+    }
+    Ok(summaries)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -2,7 +2,7 @@
 source: src/tui/app.rs
 expression: terminal.backend()
 ---
-" Todo List │ Meetings │ Reflections                                             "
+" Todo List │ Meetings │ Reflections │ Summaries                                 "
 "┌Meetings──────────────────────────────────────────────────────────────────────┐"
 "│                                                                              │"
 "│                                                                              │"
@@ -16,7 +16,7 @@ expression: terminal.backend()
 "│                    █ █ █    █  █ █   █   █  █ █ █ █ █  █                     │"
 "│                    █ █  ██  █  █  ██  █  █  █  █  █ █ █                      │"
 "│                                                                              │"
-"│                    v1.1.0 — by Peter Vlasveld                                │"
+"│                    v1.2.0 — by Peter Vlasveld                                │"
 "│                                                                              │"
 "│                                                                              │"
 "│                                                                              │"
