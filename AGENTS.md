@@ -81,9 +81,12 @@ each event to its full entity data, reads `.md` file content for entities with a
 outputs JSON to stdout. Three invocation modes: `today`, `week` (Monday–Sunday), and explicit date
 range. The `reflect summary create <start> <end>` command reads markdown content from stdin, creates
 a summary via `SummaryService` (persisting a `SUMMARY_CREATED` event), writes the content to a
-date-based `.md` file, and outputs the resulting `Summary` as JSON. Timestamp parsing is shared
-between timeline and summary commands via `parse_date_input` and `parse_date_range` helpers. When no
-subcommand is given, the TUI launches.
+date-based `.md` file, and outputs the resulting `Summary` as JSON. The `reflect meeting sync <start> <end>`
+command fetches meetings from a `CalendarBackend` (Google Calendar), upserts them into the meetings
+table via `MeetingService::sync_meetings`, and outputs created/updated meetings as JSON. Timestamp
+parsing and time range resolution are shared across all CLI commands via the `cli::date` module
+(`parse_date_input`, `parse_date_range`, `resolve_time_range_from_args`). When no subcommand is given,
+the TUI launches.
 
 ### Service
 
@@ -113,4 +116,16 @@ ensuring the database entity ID matches the file name UUID.
 The `schema` module contains all DDL statements (`CREATE TABLE IF NOT EXISTS ...`) and exposes
 an `init_schema` function that is called at startup to ensure the database schema exists. All table
 definitions are centralized here; repositories should not create or alter tables.
+
+### Calendar
+
+The `calendar` module provides the abstraction layer for external calendar integration. The
+`CalendarBackend` trait (in `calendar::backend`) defines the async interface for fetching meetings
+within a time range. The `calendar::google` submodule implements `CalendarBackend` for Google
+Calendar, handling OAuth2 authentication (browser-based flow with manual copy-paste fallback), token
+storage at `~/.config/reflections/token.json`, and the Calendar API HTTP client. OAuth client
+credentials are embedded at build time via `env!` macros (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`).
+The `calendar::types` module defines the `CalendarEvent` struct shared between backends and services.
+`MeetingService::sync_meetings` accepts a `&dyn CalendarBackend`, fetches events, and upserts them
+(matching by name within the time range) in a single transaction.
 

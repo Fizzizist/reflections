@@ -16,6 +16,12 @@ cargo install --git https://github.com/fizzizist/reflections.git
 If you don't use Neovim you might want to set the `EDITOR` env var so that the app knows what editor
 to open when you make a note.
 
+Google Calendar sync requires OAuth credentials embedded at build time. The developer (not the end
+user) must provide `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` environment variables during
+`cargo build`. Tokens are cached per-user at `~/.config/reflections/token.json`. See
+[Google's OAuth desktop app documentation](https://developers.google.com/identity/protocols/oauth2/native-app)
+for creating credentials.
+
 ## Controls
 
 Running `reflect` with no arguments bring you into the TUI.
@@ -40,6 +46,12 @@ of what the user did for that time period.
 - `summary create <start> <end>` -- create a summary by piping markdown content via stdin
   - `echo "content" | reflect summary create 2026-06-30 2026-07-06`
   - Timestamps use the same format as `timeline`
+- `meeting sync <start> <end>` -- sync meetings from Google Calendar into the local database
+  - `reflect meeting sync today`
+  - `reflect meeting sync week`
+  - `reflect meeting sync <start> <end>` (format: `%Y-%m-%d` or `%Y-%m-%d %H:%M`)
+  - Meeting matching is by name within the time range; existing meetings with the same name but a different time are updated
+  - Outputs created/updated meetings as JSON
 
 ## Tags
 
