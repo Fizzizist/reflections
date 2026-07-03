@@ -57,13 +57,19 @@ impl MeetingService {
     ) -> Result<Vec<SyncResult>> {
         let tx = self.conn.transaction().await?;
         let calendar_events = backend.fetch_meetings(start, end).await?;
+
+        let names: Vec<String> = calendar_events.iter().map(|e| e.name.clone()).collect();
+        let existing_meetings =
+            repositories::meeting::find_by_names_in_range(&tx, &names, start, end).await?;
+        let existing_map: std::collections::HashMap<&str, &Meeting> = existing_meetings
+            .iter()
+            .map(|m| (m.name.as_str(), m))
+            .collect();
+
         let mut results = Vec::new();
 
         for event in calendar_events {
-            let filter = MeetingFilter::new().name(&event.name).start(start).end(end);
-            let existing = repositories::meeting::find_one(&tx, &filter).await?;
-
-            match existing {
+            match existing_map.get(event.name.as_str()) {
                 Some(meeting) if meeting.scheduled_at == event.scheduled_at => {
                     continue;
                 }

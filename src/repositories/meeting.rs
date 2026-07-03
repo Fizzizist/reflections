@@ -49,6 +49,7 @@ impl MeetingFilter {
         self
     }
 
+    #[cfg(test)]
     pub fn name(mut self, name: &str) -> Self {
         self.name = Some(name.to_string());
         self
@@ -155,6 +156,36 @@ pub async fn find_one(conn: &Connection, filter: &MeetingFilter) -> Result<Optio
         return Ok(Some(row_to_meeting(&row)?));
     }
     Ok(None)
+}
+
+pub async fn find_by_names_in_range(
+    conn: &Connection,
+    names: &[String],
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> Result<Vec<Meeting>> {
+    if names.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let placeholders = vec!["?"; names.len()].join(", ");
+    let sql = format!(
+        "SELECT {} WHERE name IN ({}) AND scheduled_at >= ? AND scheduled_at < ? ORDER BY scheduled_at ASC",
+        SELECT_COLUMNS, placeholders
+    );
+
+    let mut params: Vec<String> = names.to_vec();
+    params.push(start.format("%Y-%m-%d %H:%M:%S").to_string());
+    params.push(end.format("%Y-%m-%d %H:%M:%S").to_string());
+
+    let mut rows = conn.query(&sql, params).await?;
+
+    let mut meetings = Vec::new();
+    while let Some(row) = rows.next().await? {
+        meetings.push(row_to_meeting(&row)?);
+    }
+
+    Ok(meetings)
 }
 
 pub async fn update(tx: &Transaction<'_>, meeting: &Meeting) -> Result<Meeting> {
@@ -420,5 +451,63 @@ mod tests {
 
         assert_eq!(updated.name, "New Name");
         tx.commit().await.expect("commit failed");
+    }
+
+    #[tokio::test]
+    async fn find_by_names_in_range_returns_matching_meetings() {
+        let mut conn = setup().await;
+        let tx = conn.transaction().await.expect("tx begin failed");
+
+        let now = Utc::now();
+        let start = now - Duration::hours(1);
+        let end = now + Duration::hours(1);
+
+        let m1 = make_meeting(&tx, "Alpha Meeting", now).await;
+        make_meeting(&tx, "Beta Meeting", now).await;
+        let m3 = make_meeting(&tx, "Gamma Meeting", now).await;
+
+        tx.commit().await.expect("commit failed");
+
+        let names = vec!["Alpha Meeting".to_string(), "Gamma Meeting".to_string()];
+        let meetings = find_by_names_in_range(&conn, &names, start, end)
+            .await
+            .expect("find failed");
+
+        assert_eq!(meetings.len(), 2);
+        assert_eq!(meetings[0].id, m1.id);
+        assert_eq!(meetings[1].id, m3.id);
+    }
+
+    #[tokio::test]
+    async fn find_by_names_in_range_excludes_outside_date_range() {
+        let mut conn = setup().await;
+        let tx = conn.transaction().await.expect("tx begin failed");
+
+        let now = Utc::now();
+        let start = now + Duration::hours(2);
+        let end = now + Duration::hours(4);
+
+        make_meeting(&tx, "Far Future Meeting", now).await;
+
+        tx.commit().await.expect("commit failed");
+
+        let names = vec!["Far Future Meeting".to_string()];
+        let meetings = find_by_names_in_range(&conn, &names, start, end)
+            .await
+            .expect("find failed");
+
+        assert!(meetings.is_empty());
+    }
+
+    #[tokio::test]
+    async fn find_by_names_in_range_empty_names_returns_empty() {
+        let conn = setup().await;
+        let now = Utc::now();
+
+        let meetings = find_by_names_in_range(&conn, &[], now, now + Duration::days(1))
+            .await
+            .expect("find failed");
+
+        assert!(meetings.is_empty());
     }
 }
