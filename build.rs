@@ -12,6 +12,8 @@ fn main() {
         if let Some(client_secret) = json.get("client_secret").and_then(|v| v.as_str()) {
             println!("cargo:rustc-env=GOOGLE_CLIENT_SECRET={client_secret}");
         }
+    } else if !secrets_path.exists() {
+        println!("cargo:warning=google_secrets.json not found — meeting sync will be unavailable");
     }
     println!("cargo:rerun-if-changed=google_secrets.json");
 }

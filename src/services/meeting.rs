@@ -138,6 +138,19 @@ mod tests {
         }
     }
 
+    struct FailingCalendarBackend;
+
+    #[async_trait]
+    impl CalendarBackend for FailingCalendarBackend {
+        async fn fetch_meetings(
+            &self,
+            _start: DateTime<Utc>,
+            _end: DateTime<Utc>,
+        ) -> Result<Vec<CalendarEvent>> {
+            Err(anyhow::anyhow!("backend failure"))
+        }
+    }
+
     async fn setup() -> MeetingService {
         let db = Builder::new_local(":memory:")
             .experimental_custom_types(true)
@@ -476,5 +489,33 @@ mod tests {
             .expect("create failed");
 
         assert_eq!(meeting.name, special_name);
+    }
+
+    #[tokio::test]
+    async fn sync_meetings_rolls_back_on_backend_failure() {
+        let mut service = setup().await;
+        let backend = FailingCalendarBackend;
+        let start = Utc::now();
+        let end = start + Duration::days(1);
+
+        let result = service.sync_meetings(&backend, start, end).await;
+        assert!(result.is_err());
+
+        let conn = &service.conn;
+        let mut rows = conn
+            .query("SELECT COUNT(*) FROM meeting", ())
+            .await
+            .expect("query failed");
+        let row = rows
+            .next()
+            .await
+            .expect("fetch failed")
+            .expect("row exists");
+        let count = *row
+            .get_value(0)
+            .expect("value failed")
+            .as_integer()
+            .expect("expected int");
+        assert_eq!(count, 0);
     }
 }

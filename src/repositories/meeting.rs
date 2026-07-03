@@ -98,6 +98,7 @@ pub async fn find_by_name_and_date_range(
     let sql = r#"SELECT meeting_id, name, scheduled_at, created_at, updated_at 
                  FROM meeting 
                  WHERE name = ? AND scheduled_at >= ? AND scheduled_at < ? 
+                 ORDER BY scheduled_at ASC 
                  LIMIT 1"#;
     let mut rows = tx
         .query(
