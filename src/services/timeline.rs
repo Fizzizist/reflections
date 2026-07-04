@@ -94,34 +94,30 @@ impl TimelineService {
         Ok(entries)
     }
 
-    #[allow(dead_code)]
     pub async fn get_entity_timeline(&self, entity_id: Uuid) -> Result<Vec<TimelineEntry>> {
-        let mut events =
-            repositories::event::find(&self.conn, &EventFilter::new().entity_id(entity_id)).await?;
-
+        let mut entity_ids = vec![entity_id];
         let linked_reflections = repositories::reflection::find(
             &self.conn,
             &ReflectionFilter::new().about_id(entity_id),
         )
         .await?;
 
-        for reflection in &linked_reflections {
-            let reflection_events =
-                repositories::event::find(&self.conn, &EventFilter::new().entity_id(reflection.id))
-                    .await?;
-            events.extend(reflection_events);
-        }
+        entity_ids.extend(
+            linked_reflections
+                .iter()
+                .map(|r| r.id)
+                .collect::<Vec<Uuid>>(),
+        );
 
         let linked_notes =
             repositories::note::find(&self.conn, &NoteFilter::new().related_to_id(entity_id))
                 .await?;
 
-        for note in &linked_notes {
-            let note_events =
-                repositories::event::find(&self.conn, &EventFilter::new().entity_id(note.id))
-                    .await?;
-            events.extend(note_events);
-        }
+        entity_ids.extend(linked_notes.iter().map(|n| n.id).collect::<Vec<Uuid>>());
+
+        let mut events =
+            repositories::event::find(&self.conn, &EventFilter::new().entity_id_in(entity_ids))
+                .await?;
 
         events.sort_by_key(|a| a.created_at);
 
@@ -156,8 +152,11 @@ impl TimelineService {
                 Ok(meeting.map(TimelineEntity::Meeting))
             }
             EventType::ReflectionCreated => {
-                let reflection =
-                    repositories::reflection::find_by_id(&self.conn, event.entity_id).await?;
+                let reflection = repositories::reflection::find_one(
+                    &self.conn,
+                    &ReflectionFilter::new().id(event.entity_id),
+                )
+                .await?;
                 Ok(self
                     .attach_content(reflection, |r, content| {
                         TimelineEntity::Reflection(ReflectionWithContent {
@@ -168,7 +167,11 @@ impl TimelineService {
                     .await)
             }
             EventType::NoteCreated => {
-                let note = repositories::note::find_by_id(&self.conn, event.entity_id).await?;
+                let note = repositories::note::find_one(
+                    &self.conn,
+                    &NoteFilter::new().id(event.entity_id),
+                )
+                .await?;
                 Ok(self
                     .attach_content(note, |n, content| {
                         TimelineEntity::Note(NoteWithContent { note: n, content })

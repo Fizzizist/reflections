@@ -159,10 +159,6 @@ pub async fn delete(tx: &Transaction<'_>, id: Uuid) -> Result<()> {
     Ok(())
 }
 
-pub async fn find_by_id(conn: &Connection, id: Uuid) -> Result<Option<Note>> {
-    find_one(conn, &NoteFilter::new().id(id)).await
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,39 +250,6 @@ mod tests {
         assert_eq!(fetched.file_path, inserted.file_path);
         assert_eq!(fetched.related_to_id, inserted.related_to_id);
         tx.commit().await.expect("commit failed");
-    }
-
-    #[tokio::test]
-    async fn find_by_id_returns_some_when_found() {
-        let mut conn = setup().await;
-        let tx = conn.transaction().await.expect("tx begin failed");
-
-        let id = Uuid::now_v7();
-        let inserted = insert(&tx, id, None, "/path/to/note.md")
-            .await
-            .expect("insert failed");
-        tx.commit().await.expect("commit failed");
-
-        let found = super::find_by_id(&conn, inserted.id)
-            .await
-            .expect("find failed");
-
-        assert!(found.is_some());
-        let found = found.expect("expected some");
-        assert_eq!(found.id, inserted.id);
-        assert_eq!(found.file_path, inserted.file_path);
-    }
-
-    #[tokio::test]
-    async fn find_by_id_returns_none_when_not_found() {
-        let conn = setup().await;
-
-        let nonexistent = Uuid::now_v7();
-        let found = super::find_by_id(&conn, nonexistent)
-            .await
-            .expect("find failed");
-
-        assert!(found.is_none());
     }
 
     #[tokio::test]

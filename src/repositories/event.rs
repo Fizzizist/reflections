@@ -36,7 +36,7 @@ fn row_to_event(row: &turso::Row) -> Result<Event> {
 }
 
 pub struct EventFilter {
-    pub entity_id: Option<Uuid>,
+    pub entity_id_in: Vec<Uuid>,
     pub start: Option<DateTime<Utc>>,
     pub end: Option<DateTime<Utc>>,
 }
@@ -44,14 +44,14 @@ pub struct EventFilter {
 impl EventFilter {
     pub fn new() -> Self {
         Self {
-            entity_id: None,
+            entity_id_in: Vec::new(),
             start: None,
             end: None,
         }
     }
 
-    pub fn entity_id(mut self, entity_id: Uuid) -> Self {
-        self.entity_id = Some(entity_id);
+    pub fn entity_id_in(mut self, entity_id_in: Vec<Uuid>) -> Self {
+        self.entity_id_in = entity_id_in;
         self
     }
 
@@ -66,19 +66,26 @@ impl EventFilter {
     }
 
     fn build_where_clause(&self) -> (String, Vec<String>) {
-        let mut conditions = Vec::new();
-        let mut params = Vec::new();
+        let mut conditions: Vec<String> = Vec::new();
+        let mut params: Vec<String> = Vec::new();
 
-        if let Some(entity_id) = self.entity_id {
-            conditions.push("entity_id = ?");
-            params.push(entity_id.to_string());
+        if !self.entity_id_in.is_empty() {
+            let placeholders = vec!["?"; self.entity_id_in.len()].join(", ");
+            let s = format!("entity_id IN ({})", placeholders);
+            conditions.push(s);
+            params.extend(
+                self.entity_id_in
+                    .iter()
+                    .map(|id| id.to_string())
+                    .collect::<Vec<String>>(),
+            );
         }
         if let Some(start) = self.start {
-            conditions.push("created_at >= ?");
+            conditions.push("created_at >= ?".to_string());
             params.push(start.format("%Y-%m-%d %H:%M:%S").to_string());
         }
         if let Some(end) = self.end {
-            conditions.push("created_at < ?");
+            conditions.push("created_at < ?".to_string());
             params.push(end.format("%Y-%m-%d %H:%M:%S").to_string());
         }
 
@@ -107,23 +114,6 @@ pub async fn find(conn: &Connection, filter: &EventFilter) -> Result<Vec<Event>>
     }
 
     Ok(events)
-}
-
-#[expect(dead_code)]
-pub async fn find_one(conn: &Connection, filter: &EventFilter) -> Result<Option<Event>> {
-    let (where_clause, params) = filter.build_where_clause();
-    let sql = format!(
-        "SELECT {}{} ORDER BY created_at ASC LIMIT 1",
-        SELECT_COLUMNS, where_clause
-    );
-
-    let mut rows = conn.query(&sql, params).await?;
-    let row = rows.next().await?;
-    while rows.next().await.is_ok_and(|r| r.is_some()) {}
-    if let Some(row) = row {
-        return Ok(Some(row_to_event(&row)?));
-    }
-    Ok(None)
 }
 
 pub async fn list_by_date_range(
@@ -238,7 +228,7 @@ mod tests {
 
         tx.commit().await.expect("commit failed");
 
-        let filter = EventFilter::new().entity_id(entity1);
+        let filter = EventFilter::new().entity_id_in(vec![entity1]);
         let events = find(&conn, &filter).await.expect("find failed");
 
         assert_eq!(events.len(), 1);
@@ -272,7 +262,7 @@ mod tests {
 
         tx.commit().await.expect("commit failed");
 
-        let filter = EventFilter::new().entity_id(entity_id);
+        let filter = EventFilter::new().entity_id_in(vec![entity_id]);
         let events = find(&conn, &filter).await.expect("find failed");
 
         assert_eq!(events.len(), 3);
@@ -295,7 +285,7 @@ mod tests {
         let conn = setup().await;
         let nonexistent = Uuid::now_v7();
 
-        let filter = EventFilter::new().entity_id(nonexistent);
+        let filter = EventFilter::new().entity_id_in(vec![nonexistent]);
         let events = find(&conn, &filter).await.expect("find failed");
 
         assert_eq!(events.len(), 0);
@@ -424,7 +414,10 @@ mod tests {
 
         tx.commit().await.expect("commit failed");
 
-        let filter = EventFilter::new().entity_id(entity1).start(start).end(end);
+        let filter = EventFilter::new()
+            .entity_id_in(vec![entity1])
+            .start(start)
+            .end(end);
         let events = find(&conn, &filter).await.expect("find failed");
 
         assert_eq!(events.len(), 1);

@@ -1,8 +1,8 @@
 use crate::services::meeting::MeetingService;
 use crate::services::note::NoteService;
 use crate::services::reflection::ReflectionService;
-use crate::services::timeline::TimelineService;
 use crate::services::summary::SummaryService;
+use crate::services::timeline::TimelineService;
 use crate::services::todo::TodoService;
 use crate::tui::editor::EditorFn;
 
@@ -220,6 +220,7 @@ pub fn render_app(app: &mut App, frame: &mut ratatui::Frame) {
         Tab::TodoList => app.todo_list_view.is_timeline_active(),
         Tab::Meetings => app.meetings_view.is_timeline_active(),
         Tab::Reflections => false,
+        Tab::Summaries => false,
     };
 
     let view_area = if timeline_active {

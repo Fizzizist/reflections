@@ -26,7 +26,7 @@ serde_json = "1.0.150"
 serde_urlencoded = "0.7.1"
 syntect = "5.3.0"
 syntect-assets = "0.23.6"
-the-other-tui-markdown = "0.1.0"
+the-other-tui-markdown = { git = "https://github.com/Fizzizist/the-other-tui-markdown.git", branch = "main", version = "0.1.0" }
 tokio = { version = "1.52.3", features = ["full"] }
 turso = "0.6.1"
 urlencoding = "2.1.3"
