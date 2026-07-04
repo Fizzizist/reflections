@@ -37,6 +37,7 @@ Running `reflect` with no arguments bring you into the TUI.
 - `n` -- Write a note about a selected entity.
 - `N` -- Write a note not tied to anything in particular.
 - `a` -- add new item (todo item, meetings).
+- `Enter` -- view timeline for item (todo item, meeting).
 - `j`, `k`, `h`, `l` -- navigation
 - `gt`, `gT` -- tab navigation
 
