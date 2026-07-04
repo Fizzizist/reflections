@@ -10,6 +10,7 @@ use uuid::Uuid;
 use crate::models::event::EventType;
 use crate::models::summary::Summary;
 use crate::repositories;
+use crate::repositories::summary::SummaryFilter;
 use crate::services::tag;
 
 #[derive(Clone)]
@@ -72,6 +73,25 @@ impl SummaryService {
         let mut title = String::new();
         reader.read_line(&mut title)?;
         Ok(title)
+    }
+
+    pub async fn get_content(&self, summary_id: Uuid) -> Result<String> {
+        if let Some(summary) =
+            repositories::summary::find_one(&self.conn, &SummaryFilter::new().id(summary_id))
+                .await?
+        {
+            let full_path = self.root_dir.join(summary.file_path.clone());
+            if let Ok(content) = fs::read_to_string(&full_path).await {
+                return Ok(content);
+            }
+            return Err(anyhow::anyhow!(format!(
+                "Unable to retrieve summary content: No content at {}.",
+                summary.file_path
+            )));
+        }
+        Err(anyhow::anyhow!(
+            "Unable to retrieve summary content: Summary not found."
+        ))
     }
 }
 

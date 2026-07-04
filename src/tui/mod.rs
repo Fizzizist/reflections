@@ -9,6 +9,7 @@ mod reflections_view;
 mod splash;
 mod status_modal;
 mod summaries_view;
+mod summary_view;
 mod timeline_view;
 mod todo_list;
 pub use app::run;

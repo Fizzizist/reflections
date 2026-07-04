@@ -1,6 +1,6 @@
 use super::splash;
-use crate::models::summary::Summary;
 use crate::services::summary::SummaryService;
+use crate::{models::summary::Summary, tui::summary_view::SummaryView};
 use anyhow::Result;
 use chrono::Local;
 use crossterm::event::{KeyCode, KeyEvent};
@@ -16,6 +16,7 @@ pub struct SummariesView {
     labels: Vec<String>,
     selected_index: Option<usize>,
     service: SummaryService,
+    summary_view: Option<SummaryView>,
 }
 
 impl SummariesView {
@@ -25,6 +26,7 @@ impl SummariesView {
             labels: Vec::new(),
             selected_index: None,
             service,
+            summary_view: None,
         }
     }
 
@@ -61,6 +63,12 @@ impl SummariesView {
     }
 
     pub async fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
+        if let Some(summary_view) = &mut self.summary_view {
+            if summary_view.handle_key(key) {
+                self.summary_view = None;
+            }
+            return Ok(false);
+        }
         match key.code {
             KeyCode::Char('j') | KeyCode::Down if !self.items.is_empty() => {
                 let max = self.items.len().saturating_sub(1);
@@ -77,6 +85,12 @@ impl SummariesView {
                 };
                 self.selected_index = Some(new_idx);
             }
+            KeyCode::Enter
+                if let Some(idx) = self.selected_index
+                    && let Some(item) = self.items.get(idx) =>
+            {
+                self.summary_view = Some(SummaryView::open(&self.service, item.id).await?);
+            }
             _ => {}
         }
 
@@ -84,6 +98,10 @@ impl SummariesView {
     }
 
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
+        if let Some(summary_view) = &mut self.summary_view {
+            summary_view.render(frame, area);
+            return;
+        }
         let block = Block::default().borders(Borders::ALL).title("Summaries");
         let inner = block.inner(area);
 
@@ -148,6 +166,10 @@ impl SummariesView {
     }
 
     pub fn is_modal_active(&self) -> bool {
-        false
+        self.summary_view.is_some()
+    }
+
+    pub fn is_summary_view_active(&self) -> bool {
+        self.summary_view.is_some()
     }
 }

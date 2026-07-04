@@ -215,14 +215,14 @@ impl App {
 }
 
 pub fn render_app(app: &mut App, frame: &mut ratatui::Frame) {
-    let timeline_active = match app.active_tab {
+    let overlay_active = match app.active_tab {
         Tab::TodoList => app.todo_list_view.is_timeline_active(),
         Tab::Meetings => app.meetings_view.is_timeline_active(),
         Tab::Reflections => false,
-        Tab::Summaries => false,
+        Tab::Summaries => app.summaries_view.is_summary_view_active(),
     };
 
-    let view_area = if timeline_active {
+    let view_area = if overlay_active {
         frame.area()
     } else {
         let chunks =

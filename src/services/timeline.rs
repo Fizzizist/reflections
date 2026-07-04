@@ -179,8 +179,11 @@ impl TimelineService {
                     .await)
             }
             EventType::SummaryCreated => {
-                let summary =
-                    repositories::summary::find_by_id(&self.conn, event.entity_id).await?;
+                let summary = repositories::summary::find_one(
+                    &self.conn,
+                    &repositories::summary::SummaryFilter::new().id(event.entity_id),
+                )
+                .await?;
                 Ok(self
                     .attach_content(summary, |s, content| {
                         TimelineEntity::Summary(SummaryWithContent {

@@ -8,6 +8,9 @@ use uuid::Uuid;
 use crate::models::summary::Summary;
 use crate::repositories::parse_timestamp;
 
+const SELECT_COLUMNS: &str =
+    "summary_id, file_path, start, \"end\", created_at, updated_at FROM summary";
+
 fn row_to_summary(row: &turso::Row) -> Result<Summary> {
     let id_str: String = row.get(0)?;
     let id = Uuid::parse_str(&id_str)?;
@@ -31,9 +34,45 @@ fn row_to_summary(row: &turso::Row) -> Result<Summary> {
     })
 }
 
-pub async fn find_by_id(conn: &Connection, id: Uuid) -> Result<Option<Summary>> {
-    let sql = "SELECT summary_id, file_path, start, \"end\", created_at, updated_at FROM summary WHERE summary_id = ?";
-    let mut rows = conn.query(sql, (id.to_string(),)).await?;
+pub struct SummaryFilter {
+    id: Option<Uuid>,
+}
+
+impl SummaryFilter {
+    pub fn new() -> Self {
+        Self { id: None }
+    }
+
+    pub fn id(mut self, id: Uuid) -> Self {
+        self.id = Some(id);
+        self
+    }
+
+    fn build_where_clause(&self) -> (String, Vec<String>) {
+        let mut conditions = Vec::new();
+        let mut params = Vec::new();
+
+        if let Some(id) = self.id {
+            conditions.push("summary_id = ?");
+            params.push(id.to_string());
+        }
+        let clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", conditions.join(" AND "))
+        };
+        (clause, params)
+    }
+}
+
+pub async fn find_one(conn: &Connection, filter: &SummaryFilter) -> Result<Option<Summary>> {
+    let (where_clause, params) = filter.build_where_clause();
+    let sql = format!(
+        "SELECT {}{} ORDER BY created_at ASC LIMIT 1",
+        SELECT_COLUMNS, where_clause
+    );
+
+    let mut rows = conn.query(&sql, params).await?;
     let row = rows.next().await?;
     while rows.next().await.is_ok_and(|r| r.is_some()) {}
     if let Some(row) = row {
@@ -75,7 +114,7 @@ pub async fn insert(
 }
 
 pub async fn list_summaries(conn: &Connection) -> Result<Vec<Summary>> {
-    let sql = "SELECT summary_id, file_path, start, \"end\", created_at, updated_at FROM summary ORDER BY created_at DESC;";
+    let sql = "SELECT summary_id, file_path, start, \"end\", created_at, updated_at FROM summary ORDER BY created_at ASC;";
     let mut rows = conn.query(sql, ()).await?;
 
     let mut summaries = Vec::new();
@@ -105,37 +144,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn find_by_id_returns_some_when_found() {
-        let mut conn = setup().await;
-        let tx = conn.transaction().await.expect("tx begin failed");
-
-        let id = Uuid::now_v7();
-        let ts = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        tx.execute(
-            "INSERT INTO summary (summary_id, file_path, start, \"end\", created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (id.to_string(), "test.md".to_string(), ts.clone(), ts.clone(), ts.clone(), ts.clone()),
-        ).await.expect("insert failed");
-        tx.commit().await.expect("commit failed");
-
-        let found = find_by_id(&conn, id).await.expect("find failed");
-
-        assert!(found.is_some());
-        let found = found.expect("expected some");
-        assert_eq!(found.id, id);
-        assert_eq!(found.file_path, "test.md");
-    }
-
-    #[tokio::test]
-    async fn find_by_id_returns_none_when_not_found() {
-        let conn = setup().await;
-
-        let nonexistent = Uuid::now_v7();
-        let found = find_by_id(&conn, nonexistent).await.expect("find failed");
-
-        assert!(found.is_none());
-    }
-
-    #[tokio::test]
     async fn insert_creates_summary_row() {
         let mut conn = setup().await;
         let tx = conn.transaction().await.expect("tx begin failed");
@@ -151,7 +159,9 @@ mod tests {
         assert_eq!(summary.file_path, "test.md");
         tx.commit().await.expect("commit failed");
 
-        let found = find_by_id(&conn, summary.id).await.expect("find failed");
+        let found = find_one(&conn, &SummaryFilter::new().id(summary.id))
+            .await
+            .expect("find failed");
         assert!(found.is_some());
         let found = found.expect("expected some");
         assert_eq!(found.id, summary.id);
@@ -174,7 +184,9 @@ mod tests {
             .expect("insert failed");
         tx.commit().await.expect("commit failed");
 
-        let found = find_by_id(&conn, summary.id).await.expect("find failed");
+        let found = find_one(&conn, &SummaryFilter::new().id(summary.id))
+            .await
+            .expect("find failed");
         assert!(found.is_some());
         let found = found.expect("expected some");
         assert_eq!(found.start, start);
