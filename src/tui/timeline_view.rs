@@ -4,6 +4,7 @@ use crate::tui::highlight::build_renderer;
 use anyhow::Result;
 use chrono::Local;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::terminal;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -47,11 +48,14 @@ impl TimelineView {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => true,
             KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.scroll_down(12);
+                // if it can't actually get a height, just use a reasonable default
+                let (_, height) = terminal::size().unwrap_or((0, 24));
+                self.scroll_down((height / 2).into());
                 false
             }
             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.scroll_up(12);
+                let (_, height) = terminal::size().unwrap_or((0, 24));
+                self.scroll_up((height / 2).into());
                 false
             }
             _ => false,
@@ -202,16 +206,8 @@ impl TimelineView {
         }
     }
 
-    pub fn set_entries(&mut self, entries: Vec<TimelineEntry>) {
-        self.entries = entries;
-    }
-
     pub fn scroll_offset(&self) -> usize {
         self.scroll_offset
-    }
-
-    pub fn set_scroll_offset(&mut self, offset: usize) {
-        self.scroll_offset = offset;
     }
 }
 

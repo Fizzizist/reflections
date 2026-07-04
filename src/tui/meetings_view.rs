@@ -265,14 +265,6 @@ impl MeetingsView {
         self.timeline_view = Some(view);
     }
 
-    pub fn close_timeline(&mut self) {
-        self.timeline_view = None;
-    }
-
-    pub async fn reload_items_for_test(&mut self) -> Result<()> {
-        self.load_items().await
-    }
-
     pub async fn create_meeting_for_test(
         &mut self,
         name: &str,

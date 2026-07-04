@@ -317,14 +317,6 @@ impl TodoListView {
         self.timeline_view = Some(view);
     }
 
-    pub fn close_timeline(&mut self) {
-        self.timeline_view = None;
-    }
-
-    pub async fn reload_items_for_test(&mut self) -> Result<()> {
-        self.load_items().await
-    }
-
     pub async fn create_todo_for_test(&mut self, label: &str) -> Result<TodoItem> {
         let item = self.service.create_todo_item(label).await?;
         self.load_items().await?;

@@ -5,6 +5,8 @@ use crate::services::summary::SummaryService;
 use crate::services::timeline::TimelineService;
 use crate::services::todo::TodoService;
 use crate::tui::editor::EditorFn;
+use ratatui::layout::{Constraint, Layout};
+use ratatui::widgets::Tabs;
 
 use super::meetings_view::MeetingsView;
 use super::reflections_view::ReflectionsView;
@@ -213,9 +215,6 @@ impl App {
 }
 
 pub fn render_app(app: &mut App, frame: &mut ratatui::Frame) {
-    use ratatui::layout::{Constraint, Layout};
-    use ratatui::widgets::Tabs;
-
     let timeline_active = match app.active_tab {
         Tab::TodoList => app.todo_list_view.is_timeline_active(),
         Tab::Meetings => app.meetings_view.is_timeline_active(),
