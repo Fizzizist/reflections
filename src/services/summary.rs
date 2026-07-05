@@ -7,10 +7,12 @@ use tokio::fs::{self, create_dir_all};
 use turso::Connection;
 use uuid::Uuid;
 
+use crate::models::DiffEntry;
 use crate::models::event::EventType;
 use crate::models::summary::Summary;
 use crate::repositories;
 use crate::repositories::summary::SummaryFilter;
+use crate::services::editable::EditableEntity;
 use crate::services::tag;
 
 #[derive(Clone)]
@@ -92,6 +94,43 @@ impl SummaryService {
         Err(anyhow::anyhow!(
             "Unable to retrieve summary content: Summary not found."
         ))
+    }
+
+    pub async fn post_edit_summary(
+        &mut self,
+        summary_id: &Uuid,
+        diff: Vec<DiffEntry>,
+    ) -> Result<()> {
+        let tx = self.conn.transaction().await?;
+        repositories::summary::touch(&tx, summary_id).await?;
+        let metadata = serde_json::to_string(&diff)?;
+        repositories::event::insert(&tx, *summary_id, &EventType::SummaryUpdated, &metadata)
+            .await?;
+        Ok(())
+    }
+}
+
+impl EditableEntity for SummaryService {
+    type Entity = Summary;
+
+    async fn create(&mut self, _related_id: Option<Uuid>) -> Result<Summary> {
+        Err(anyhow::anyhow!(
+            "Summary can't be shouldn't be created this way"
+        ))
+    }
+
+    fn full_path(&self, file_path: &str) -> PathBuf {
+        SummaryService::full_path(self, file_path)
+    }
+
+    async fn cleanup(&mut self, _id: Uuid) -> Result<()> {
+        // right now we don't have a code path that needs this, but we may do a creation through
+        // TUI in the future
+        todo!();
+    }
+
+    async fn post_edit(&mut self, id: Uuid, diff: Vec<DiffEntry>) -> Result<()> {
+        self.post_edit_summary(&id, diff).await
     }
 }
 

@@ -1,5 +1,6 @@
 use super::splash;
 use crate::services::summary::SummaryService;
+use crate::tui::editor;
 use crate::{models::summary::Summary, tui::summary_view::SummaryView};
 use anyhow::Result;
 use chrono::Local;
@@ -17,16 +18,18 @@ pub struct SummariesView {
     selected_index: Option<usize>,
     service: SummaryService,
     summary_view: Option<SummaryView>,
+    editor_fn: editor::EditorFn,
 }
 
 impl SummariesView {
-    pub fn new(service: SummaryService) -> Self {
+    pub fn new(service: SummaryService, editor_fn: editor::EditorFn) -> Self {
         Self {
             items: Vec::new(),
             labels: Vec::new(),
             selected_index: None,
             service,
             summary_view: None,
+            editor_fn,
         }
     }
 
@@ -64,10 +67,13 @@ impl SummariesView {
 
     pub async fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
         if let Some(summary_view) = &mut self.summary_view {
-            if summary_view.handle_key(key) {
+            if summary_view.handle_key(key, &mut self.service).await? {
                 self.summary_view = None;
+                return Ok(false);
             }
-            return Ok(false);
+            // last key might have been an edit key, so refresh to make sure content is up to date.
+            summary_view.refresh(&self.service).await?;
+            return Ok(true);
         }
         match key.code {
             KeyCode::Char('j') | KeyCode::Down if !self.items.is_empty() => {
@@ -89,7 +95,9 @@ impl SummariesView {
                 if let Some(idx) = self.selected_index
                     && let Some(item) = self.items.get(idx) =>
             {
-                self.summary_view = Some(SummaryView::open(&self.service, item.id).await?);
+                self.summary_view = Some(
+                    SummaryView::open(&self.service, item.clone(), self.editor_fn.clone()).await?,
+                );
             }
             _ => {}
         }

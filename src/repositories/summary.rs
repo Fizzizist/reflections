@@ -124,6 +124,12 @@ pub async fn list_summaries(conn: &Connection) -> Result<Vec<Summary>> {
     Ok(summaries)
 }
 
+pub async fn touch(tx: &Transaction<'_>, summary_id: &Uuid) -> Result<()> {
+    let sql = "UPDATE summary SET updated_at = CURRENT_TIMESTAMP WHERE summary_id = ?";
+    tx.execute(sql, vec![summary_id.to_string()]).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -5,6 +5,7 @@ use tokio::fs::{self, create_dir_all};
 use turso::Connection;
 use uuid::Uuid;
 
+use crate::models::DiffEntry;
 use crate::models::event::EventType;
 use crate::models::note::Note;
 use crate::repositories;
@@ -135,6 +136,11 @@ impl EditableEntity for NoteService {
 
     async fn cleanup(&mut self, id: Uuid) -> Result<()> {
         self.cleanup_note(id).await
+    }
+
+    async fn post_edit(&mut self, _id: Uuid, _diff: Vec<DiffEntry>) -> Result<()> {
+        // touch note and emit updated event
+        todo!();
     }
 }
 

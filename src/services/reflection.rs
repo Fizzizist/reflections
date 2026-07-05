@@ -5,6 +5,7 @@ use tokio::fs::{self, create_dir_all};
 use turso::Connection;
 use uuid::Uuid;
 
+use crate::models::DiffEntry;
 use crate::models::event::EventType;
 use crate::models::reflection::Reflection;
 use crate::repositories;
@@ -123,6 +124,11 @@ impl EditableEntity for ReflectionService {
 
     async fn cleanup(&mut self, id: Uuid) -> Result<()> {
         self.cleanup_reflection(id).await
+    }
+
+    async fn post_edit(&mut self, _id: Uuid, _diff: Vec<DiffEntry>) -> Result<()> {
+        // emit updated event and touch reflection
+        todo!();
     }
 }
 

@@ -12,6 +12,7 @@ pub enum EventType {
     ReflectionCreated,
     NoteCreated,
     SummaryCreated,
+    SummaryUpdated,
 }
 
 impl fmt::Display for EventType {
@@ -23,6 +24,7 @@ impl fmt::Display for EventType {
             EventType::ReflectionCreated => write!(f, "REFLECTION_CREATED"),
             EventType::NoteCreated => write!(f, "NOTE_CREATED"),
             EventType::SummaryCreated => write!(f, "SUMMARY_CREATED"),
+            EventType::SummaryUpdated => write!(f, "SUMMARY_UPDATED"),
         }
     }
 }

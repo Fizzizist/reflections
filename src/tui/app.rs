@@ -80,7 +80,7 @@ impl App {
                 timeline_service.clone(),
             ),
             reflections_view: ReflectionsView::new(reflection_service.clone()),
-            summaries_view: SummariesView::new(summary_service.clone()),
+            summaries_view: SummariesView::new(summary_service.clone(), editor_fn.clone()),
             reflection_service,
             note_service,
             editor_fn,
@@ -382,12 +382,12 @@ mod tests {
     fn test_editor_fn() -> EditorFn {
         Arc::new(|path: &std::path::Path| {
             std::fs::write(path, "test reflection content")?;
-            Ok(())
+            Ok(Vec::new())
         })
     }
 
     fn noop_editor_fn() -> EditorFn {
-        Arc::new(|_path: &std::path::Path| Ok(()))
+        Arc::new(|_path: &std::path::Path| Ok(Vec::new()))
     }
 
     #[tokio::test]

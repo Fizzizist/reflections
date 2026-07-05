@@ -1,4 +1,6 @@
+use crate::models::summary::Summary;
 use crate::services::summary::SummaryService;
+use crate::tui::editor;
 use crate::tui::highlight::build_renderer;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -11,7 +13,6 @@ use ratatui::{
 };
 use std::sync::LazyLock;
 use the_other_tui_markdown::{Renderer, Theme, into_text_with_renderer};
-use uuid::Uuid;
 
 static RENDERER: LazyLock<Renderer> = LazyLock::new(|| {
     let theme = Theme {
@@ -26,34 +27,55 @@ static RENDERER: LazyLock<Renderer> = LazyLock::new(|| {
 });
 
 pub struct SummaryView {
+    summary: Summary,
     content: String,
     scroll_offset: usize,
+    editor_fn: editor::EditorFn,
 }
 
 impl SummaryView {
-    pub async fn open(service: &SummaryService, entity_id: Uuid) -> Result<Self> {
-        let content = service.get_content(entity_id).await?;
+    pub async fn open(
+        service: &SummaryService,
+        summary: Summary,
+        editor_fn: editor::EditorFn,
+    ) -> Result<Self> {
+        let content = service.get_content(summary.id).await?;
         Ok(Self {
+            summary,
             content,
             scroll_offset: 0,
+            editor_fn,
         })
     }
 
-    pub fn handle_key(&mut self, key: KeyEvent) -> bool {
+    pub async fn refresh(&mut self, service: &SummaryService) -> Result<()> {
+        self.content = service.get_content(self.summary.id).await?;
+        Ok(())
+    }
+
+    pub async fn handle_key(
+        &mut self,
+        key: KeyEvent,
+        service: &mut SummaryService,
+    ) -> Result<bool> {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => true,
+            KeyCode::Esc | KeyCode::Char('q') => Ok(true),
             KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 // if it can't actually get a height, just use a reasonable default
                 let (_, height) = terminal::size().unwrap_or((0, 24));
                 self.scroll_down((height / 2).into());
-                false
+                Ok(false)
             }
             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 let (_, height) = terminal::size().unwrap_or((0, 24));
                 self.scroll_up((height / 2).into());
-                false
+                Ok(false)
             }
-            _ => false,
+            KeyCode::Char('e') => {
+                editor::edit(service, &self.summary, &self.editor_fn).await?;
+                Ok(false)
+            }
+            _ => Ok(false),
         }
     }
 

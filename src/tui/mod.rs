@@ -1,5 +1,5 @@
 mod app;
-mod editor;
+pub mod editor;
 mod highlight;
 mod input_box;
 mod input_modal;

@@ -178,7 +178,7 @@ impl TimelineService {
                     })
                     .await)
             }
-            EventType::SummaryCreated => {
+            EventType::SummaryCreated | EventType::SummaryUpdated => {
                 let summary = repositories::summary::find_one(
                     &self.conn,
                     &repositories::summary::SummaryFilter::new().id(event.entity_id),

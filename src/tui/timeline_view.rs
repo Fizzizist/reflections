@@ -168,6 +168,28 @@ impl TimelineView {
                     .unwrap_or("(no content)");
                 format!("## 📊 Summary — {}\n\n{}\n", time_str, content)
             }
+            EventType::SummaryUpdated => {
+                let mut content = Vec::new();
+                if let Ok(json) = serde_json::from_str::<Vec<Value>>(&entry.metadata) {
+                    for diff_entry in json {
+                        match diff_entry.get("left") {
+                            Some(left) => match diff_entry.get("right") {
+                                Some(_right) => content.push(format!(" {}", left)),
+                                None => content.push(format!("-{}", left)),
+                            },
+                            None => {
+                                if let Some(right) = diff_entry.get("right") {
+                                    content.push(format!("+{}", right));
+                                }
+                            }
+                        }
+                    }
+                }
+                if !content.is_empty() {
+                    return format!("## 📊 Summary — {}\n\n{}\n", time_str, content.join("\n"));
+                }
+                format!("## 📊 Summary — {}\n\n (no diff content) \n", time_str)
+            }
         }
     }
 
