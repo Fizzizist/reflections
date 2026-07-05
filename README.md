@@ -13,8 +13,7 @@ If you don't care to have calendar sync functionality, then you can just `cargo 
 cargo install --git https://github.com/fizzizist/reflections.git
 ```
 
-We will be providing pre-compiled binaries in the near future for the calendar syncing. If you want to compile it yourself, you'll need to create
-a `google_secrets.json` file before running `cargo install`.
+Pre-compiled binaries for MacOS and Linux are available with [releases](https://github.com/Fizzizist/reflections/releases).
 
 ## Setup
 
