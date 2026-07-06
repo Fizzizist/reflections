@@ -2,6 +2,10 @@
 name = "reflections"
 version = "1.5.0"
 edition = "2024"
+description = "A work journalling TUI and CLI"
+license = "MIT"
+repository = "https://github.com/Fizzizist/reflections"
+homepage = "https://github.com/Fizzizist/reflections"
 
 [[bin]]
 name = "reflect"
