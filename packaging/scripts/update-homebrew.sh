@@ -9,12 +9,12 @@ if [[ -z "$VERSION" || -z "$SHA256" ]]; then
   exit 1
 fi
 
-if [[ -z "${DEPLOY_HOST:-}" || -z "${DEPLOY_PATH:-}" ]]; then
-  echo "Missing required env vars: DEPLOY_HOST, DEPLOY_PATH" >&2
+if [[ -z "${DEPLOY_HOST:-}" || -z "${RELEASES_URL_PATH:-}" ]]; then
+  echo "Missing required env vars: DEPLOY_HOST, RELEASES_URL_PATH" >&2
   exit 1
 fi
 
-BASE_URL="https://${DEPLOY_HOST}/${DEPLOY_PATH#/}"
+BASE_URL="https://${DEPLOY_HOST}/${RELEASES_URL_PATH#/}"
 BASE_URL="${BASE_URL%/}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

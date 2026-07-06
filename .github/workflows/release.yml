@@ -7,6 +7,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RELEASES_URL_PATH: releases/reflections
 
 jobs:
   check-version:
@@ -109,9 +110,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.check-version.outputs.version }}
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
         run: |
-          BASE_URL="https://${DEPLOY_HOST}/${DEPLOY_PATH#/}"
+          BASE_URL="https://${DEPLOY_HOST}/${RELEASES_URL_PATH#/}"
           BASE_URL="${BASE_URL%/}"
           gh release create "v${VERSION}" \
             --title "v${VERSION}" \
@@ -124,5 +124,4 @@ jobs:
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
         run: packaging/scripts/update-homebrew.sh ${{ needs.check-version.outputs.version }} ${{ steps.sha.outputs.aarch64 }}
