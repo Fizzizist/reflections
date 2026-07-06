@@ -9,6 +9,14 @@ if [[ -z "$VERSION" || -z "$SHA256" ]]; then
   exit 1
 fi
 
+if [[ -z "${DEPLOY_HOST:-}" || -z "${DEPLOY_PATH:-}" ]]; then
+  echo "Missing required env vars: DEPLOY_HOST, DEPLOY_PATH" >&2
+  exit 1
+fi
+
+BASE_URL="https://${DEPLOY_HOST}/${DEPLOY_PATH#/}"
+BASE_URL="${BASE_URL%/}"
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TEMPLATE_FILE="$SCRIPT_DIR/../homebrew/reflections-bin.rb"
 
@@ -31,6 +39,7 @@ if [[ ! -f "$FORMULA_FILE" ]]; then
 fi
 
 sed -i.bak "s/^  version .*/  version \"$VERSION\"/" "$FORMULA_FILE"
+sed -i.bak "s|^  url .*|  url \"${BASE_URL}/reflections-v#{version}-aarch64-apple-darwin.tar.gz\"|" "$FORMULA_FILE"
 sed -i.bak "s/^  sha256 .*/  sha256 \"$SHA256\"/" "$FORMULA_FILE"
 rm -f "${FORMULA_FILE}.bak"
 
