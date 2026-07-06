@@ -2,7 +2,8 @@ name: Release
 
 on:
   push:
-    branches: ["trunk"]
+    branches:
+      - trunk
 
 env:
   CARGO_TERM_COLOR: always
@@ -17,19 +18,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Check version delta
+          fetch-tags: true
+
+      - name: Check version
         id: check
         run: |
-          output=$(bash packaging/scripts/check-version.sh)
-          should_release=$(echo "$output" | grep '^should_release=' | cut -d= -f2)
-          version=$(echo "$output" | grep '^version=' | cut -d= -f2)
-          echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Version: $version, should_release: $should_release"
+          result=$(packaging/scripts/check-version.sh Cargo.toml .)
+          echo "should_release=$(echo "$result" | grep should_release | cut -d= -f2)" >> $GITHUB_OUTPUT
+          echo "version=$(echo "$result" | grep '^version=' | cut -d= -f2)" >> $GITHUB_OUTPUT
 
   build:
     needs: check-version
     if: needs.check-version.outputs.should_release == 'true'
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
@@ -37,78 +38,64 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - os: macos-latest
             target: aarch64-apple-darwin
-    runs-on: ${{ matrix.os }}
-    env:
-      VERSION: ${{ needs.check-version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+
       - name: Synthesize google_secrets.json
-        run: |
-          cat > google_secrets.json <<EOF
-          {"client_id":"${{ secrets.GOOGLE_CLIENT_ID }}","client_secret":"${{ secrets.GOOGLE_CLIENT_SECRET }}"}
-          EOF
-      - name: Build
-        run: cargo build --release
+        run: echo '{"client_id":"${{ secrets.GOOGLE_CLIENT_ID }}","client_secret":"${{ secrets.GOOGLE_CLIENT_SECRET }}"}' > google_secrets.json
+
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build release
+        run: cargo build --release --target ${{ matrix.target }}
+
       - name: Strip binary
-        run: strip target/release/reflect
-      - name: Archive
-        run: |
-          tar -czf reflections-v${VERSION}-${{ matrix.target }}.tar.gz \
-            -C target/release reflect
+        run: strip target/${{ matrix.target }}/release/reflect
+
+      - name: Create tarball
+        run: tar czf reflections-v${{ needs.check-version.outputs.version }}-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release reflect
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: reflections-v${VERSION}-${{ matrix.target }}
-          path: reflections-v${VERSION}-${{ matrix.target }}.tar.gz
+          name: reflections-v${{ needs.check-version.outputs.version }}-${{ matrix.target }}
+          path: reflections-v${{ needs.check-version.outputs.version }}-${{ matrix.target }}.tar.gz
 
   publish:
     needs: [check-version, build]
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
-    env:
-      VERSION: ${{ needs.check-version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          fetch-tags: true
 
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
           merge-multiple: true
+          path: artifacts
 
-      - name: Create git tag
+      - name: Compute SHA256
+        id: sha
+        run: echo "aarch64=$(sha256sum artifacts/reflections-v${{ needs.check-version.outputs.version }}-aarch64-apple-darwin.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+
+      - name: Create and push tag
         run: |
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git config user.name "github-actions[bot]"
-          git tag "v${VERSION}" || echo "Tag already exists"
-          git push origin "v${VERSION}" || echo "Tag already pushed"
+          git tag v${{ needs.check-version.outputs.version }}
+          git push origin v${{ needs.check-version.outputs.version }}
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ env.VERSION }}
-          name: v${{ env.VERSION }}
-          generate_release_notes: true
-          files: artifacts/*.tar.gz
-
-      - name: Upload artifacts to deploy host
+      - name: Upload to peter.vlasveld.info
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-        run: |
-          for tarball in artifacts/*.tar.gz; do
-            bash packaging/scripts/sync-artifacts.sh "$tarball"
-          done
+        run: packaging/scripts/sync-artifacts.sh artifacts/reflections-v${{ needs.check-version.outputs.version }}-x86_64-unknown-linux-gnu.tar.gz artifacts/reflections-v${{ needs.check-version.outputs.version }}-aarch64-apple-darwin.tar.gz
 
       - name: Update Homebrew tap
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: |
-          bash packaging/scripts/update-homebrew.sh \
-            "$VERSION" \
-            "artifacts/reflections-v${VERSION}-aarch64-apple-darwin.tar.gz" \
-            "packaging/homebrew/reflections-bin.rb"
+        run: packaging/scripts/update-homebrew.sh ${{ needs.check-version.outputs.version }} ${{ steps.sha.outputs.aarch64 }}

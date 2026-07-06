@@ -23,13 +23,11 @@ Download the latest tarball from the [releases page](https://github.com/Fizzizis
 
 ### From source
 
-If you don't care to have calendar sync functionality, then you can just `cargo install` the app:
-
 ```sh
 cargo install --git https://github.com/fizzizist/reflections.git
 ```
 
-Pre-compiled binaries include embedded Google OAuth credentials for calendar sync; building from source requires your own `google_secrets.json` (see Setup below).
+Pre-compiled binaries include embedded Google OAuth credentials for calendar sync. Building from source requires your own `google_secrets.json` (see Setup below).
 
 ## Setup
 

@@ -1,20 +1,16 @@
 class ReflectionsBin < Formula
-  desc "A terminal-based work journalling app with Google Calendar sync"
+  desc "A terminal-based work journaling app with calendar sync"
   homepage "https://github.com/Fizzizist/reflections"
-  url "__URL__"
-  sha256 "__SHA256__"
-  version "__VERSION__"
+  version "PLACEHOLDER_VERSION"
+  url "https://peter.vlasveld.info/releases/reflections/reflections-v#{version}-aarch64-apple-darwin.tar.gz"
+  sha256 "PLACEHOLDER_SHA256"
   license "MIT"
-
-  on_macos do
-    depends_on "freetype" => :build
-  end
 
   def install
     bin.install "reflect"
   end
 
   test do
-    assert_match "reflections", shell_output("#{bin}/reflect --help")
+    assert_match "Usage", shell_output("#{bin}/reflect --help")
   end
 end
