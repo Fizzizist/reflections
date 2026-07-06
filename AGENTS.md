@@ -140,3 +140,16 @@ The `calendar::types` module defines the `CalendarEvent` struct shared between b
 `MeetingService::sync_meetings` accepts a `&dyn CalendarBackend`, fetches events, and upserts them
 (matching by name within the time range) in a single transaction.
 
+### CD Pipeline
+
+The `.github/workflows/release.yml` workflow is triggered on every push to `trunk`. It is
+idempotent on version: `packaging/scripts/check-version.sh` compares the `Cargo.toml` version
+against the latest git tag and skips the entire pipeline if they match. When the version differs,
+the `build` job compiles release binaries for `x86_64-unknown-linux-gnu` (ubuntu-latest) and
+`aarch64-apple-darwin` (macos-latest), synthesizing `google_secrets.json` from GitHub Actions
+secrets so credentials are embedded at compile time. The `publish` job creates a `v{version}` git
+tag, uploads tarballs to `peter.vlasveld.info/releases/reflections/` via SCP
+(`packaging/scripts/sync-artifacts.sh`), and updates the Homebrew tap
+(`packaging/scripts/update-homebrew.sh`) with the new version and SHA256. AUR publishing is
+deferred until AUR account registration reopens; the Linux tarball is still built and uploaded.
+

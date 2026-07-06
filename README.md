@@ -7,13 +7,27 @@ terminal? Well -- here's your answer to that.
 
 ## Installation
 
-If you don't care to have calendar sync functionality, then you can just `cargo install` the app:
+### Pre-compiled binaries
+
+macOS (Apple Silicon):
+
+```sh
+brew install Fizzizist/tap/reflections-bin
+```
+
+Or download the latest tarball from the [releases page](https://github.com/Fizzizist/reflections/releases).
+
+Linux:
+
+Download the latest tarball from the [releases page](https://github.com/Fizzizist/reflections/releases).
+
+### From source
 
 ```sh
 cargo install --git https://github.com/fizzizist/reflections.git
 ```
 
-Pre-compiled binaries for MacOS and Linux are available with [releases](https://github.com/Fizzizist/reflections/releases).
+Pre-compiled binaries include embedded Google OAuth credentials for calendar sync. Building from source requires your own `google_secrets.json` (see Setup below).
 
 ## Setup
 
