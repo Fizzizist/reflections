@@ -78,6 +78,13 @@ jobs:
           merge-multiple: true
           path: artifacts
 
+      - name: Verify artifacts
+        run: |
+          if ! ls artifacts/*.tar.gz 1>/dev/null 2>&1; then
+            echo "Error: No tarball artifacts found" >&2
+            exit 1
+          fi
+
       - name: Compute SHA256
         id: sha
         run: echo "aarch64=$(sha256sum artifacts/reflections-v${{ needs.check-version.outputs.version }}-aarch64-apple-darwin.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT

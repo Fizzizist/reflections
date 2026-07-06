@@ -2,7 +2,7 @@
 name = "reflections"
 version = "1.6.0"
 edition = "2024"
-description = "A terminal-based work journaling app with calendar sync"
+description = "A work journaling app with TUI and CLI"
 license = "MIT"
 repository = "https://github.com/Fizzizist/reflections"
 homepage = "https://github.com/Fizzizist/reflections"

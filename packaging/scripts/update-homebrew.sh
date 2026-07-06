@@ -12,11 +12,16 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TEMPLATE_FILE="$SCRIPT_DIR/../homebrew/reflections-bin.rb"
 
+ASKPASS_FILE=$(mktemp)
 CLONE_DIR=$(mktemp -d)
 
-trap 'rm -rf "$CLONE_DIR"' EXIT
+trap 'rm -f "$ASKPASS_FILE"; rm -rf "$CLONE_DIR"' EXIT
 
-git clone "https://${HOMEBREW_TAP_TOKEN}@github.com/Fizzizist/homebrew-tap.git" "$CLONE_DIR"
+printf '#!/usr/bin/env bash\necho "${HOMEBREW_TAP_TOKEN}"\n' > "$ASKPASS_FILE"
+chmod +x "$ASKPASS_FILE"
+export GIT_ASKPASS="$ASKPASS_FILE"
+
+git clone "https://x-access-token@github.com/Fizzizist/homebrew-tap.git" "$CLONE_DIR"
 
 mkdir -p "$CLONE_DIR/Formula"
 FORMULA_FILE="$CLONE_DIR/Formula/reflections-bin.rb"
@@ -33,5 +38,9 @@ cd "$CLONE_DIR"
 git config user.name "Release Bot"
 git config user.email "release@reflections.local"
 git add Formula/reflections-bin.rb
-git commit -m "Update reflections-bin to v${VERSION}"
-git push origin HEAD:main
+if [[ -n $(git status --porcelain) ]]; then
+  git commit -m "Update reflections-bin to v${VERSION}"
+  git push origin HEAD:main
+else
+  echo "Formula already up to date — nothing to commit"
+fi
