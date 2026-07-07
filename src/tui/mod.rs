@@ -12,4 +12,5 @@ mod summaries_view;
 mod summary_view;
 mod timeline_view;
 mod todo_list;
+mod version;
 pub use app::run;
