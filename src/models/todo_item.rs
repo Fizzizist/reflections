@@ -9,6 +9,18 @@ pub enum TodoStatus {
     New,
     InProgress,
     Done,
+    Canceled,
+}
+
+impl TodoStatus {
+    pub fn vec() -> Vec<TodoStatus> {
+        vec![
+            TodoStatus::New,
+            TodoStatus::InProgress,
+            TodoStatus::Done,
+            TodoStatus::Canceled,
+        ]
+    }
 }
 
 impl fmt::Display for TodoStatus {
@@ -17,6 +29,7 @@ impl fmt::Display for TodoStatus {
             TodoStatus::New => write!(f, "NEW"),
             TodoStatus::InProgress => write!(f, "IN_PROGRESS"),
             TodoStatus::Done => write!(f, "DONE"),
+            TodoStatus::Canceled => write!(f, "CANCELED"),
         }
     }
 }
@@ -38,6 +51,7 @@ impl FromStr for TodoStatus {
             "NEW" => Ok(TodoStatus::New),
             "IN_PROGRESS" => Ok(TodoStatus::InProgress),
             "DONE" => Ok(TodoStatus::Done),
+            "CANCELED" => Ok(TodoStatus::Canceled),
             other => Err(anyhow::anyhow!("invalid TodoStatus: {other}")),
         }
     }

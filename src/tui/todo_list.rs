@@ -1,6 +1,6 @@
 use super::splash;
 use super::timeline_view::TimelineView;
-use crate::models::todo_item::{TodoItem, TodoStatus};
+use crate::models::todo_item::TodoItem;
 use crate::services::note::NoteService;
 use crate::services::reflection::ReflectionService;
 use crate::services::timeline::TimelineService;
@@ -195,13 +195,8 @@ impl TodoListView {
                 .map(|(i, item)| {
                     let local_time = item.created_at.with_timezone(&Local);
                     let updated_time = item.updated_at.with_timezone(&Local);
-                    let status_cell = match item.status {
-                        TodoStatus::New => Cell::new("NEW"),
-                        TodoStatus::InProgress => Cell::new("IN_PROGRESS"),
-                        TodoStatus::Done => Cell::new("DONE"),
-                    };
                     let row = Row::new(vec![
-                        status_cell,
+                        Cell::new(item.status.to_string()),
                         Cell::new(item.label.clone()),
                         Cell::new(local_time.format("%Y-%m-%d %H:%M").to_string()),
                         Cell::new(updated_time.format("%Y-%m-%d %H:%M").to_string()),
@@ -270,6 +265,9 @@ impl TodoListView {
         self.timeline_view.is_some()
     }
 }
+
+#[cfg(test)]
+use crate::models::todo_item::TodoStatus;
 
 #[cfg(test)]
 impl TodoListView {
