@@ -3,9 +3,9 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use std::path::PathBuf;
 use tokio::fs;
-use turso::Connection;
 use uuid::Uuid;
 
+use crate::db::Database;
 use crate::models::event::{Event, EventType};
 use crate::models::meeting::Meeting;
 use crate::models::note::Note;
@@ -18,6 +18,7 @@ use crate::repositories::meeting::MeetingFilter;
 use crate::repositories::note::NoteFilter;
 use crate::repositories::reflection::ReflectionFilter;
 use crate::services::editable::EditableEntityRecord;
+use turso::Connection;
 
 #[derive(Serialize)]
 pub struct TimelineEntry {
@@ -63,13 +64,13 @@ pub struct SummaryWithContent {
 
 #[derive(Clone)]
 pub struct TimelineService {
-    conn: Connection,
+    db_path: PathBuf,
     root_dir: PathBuf,
 }
 
 impl TimelineService {
-    pub fn new(conn: Connection, root_dir: PathBuf) -> Self {
-        Self { conn, root_dir }
+    pub fn new(db_path: PathBuf, root_dir: PathBuf) -> Self {
+        Self { db_path, root_dir }
     }
 
     pub async fn get_timeline(
@@ -77,10 +78,12 @@ impl TimelineService {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> Result<Vec<TimelineEntry>> {
-        let events = repositories::event::list_by_date_range(&self.conn, start, end).await?;
+        let db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let conn = db.conn();
+        let events = repositories::event::list_by_date_range(conn, start, end).await?;
         let mut entries = Vec::new();
         for event in events {
-            let entity = self.resolve_entity(&event).await.unwrap_or(None);
+            let entity = self.resolve_entity(conn, &event).await.unwrap_or(None);
             entries.push(TimelineEntry {
                 event_id: event.event_id,
                 entity_id: event.entity_id,
@@ -95,12 +98,12 @@ impl TimelineService {
     }
 
     pub async fn get_entity_timeline(&self, entity_id: Uuid) -> Result<Vec<TimelineEntry>> {
+        let db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let conn = db.conn();
         let mut entity_ids = vec![entity_id];
-        let linked_reflections = repositories::reflection::find(
-            &self.conn,
-            &ReflectionFilter::new().about_id(entity_id),
-        )
-        .await?;
+        let linked_reflections =
+            repositories::reflection::find(conn, &ReflectionFilter::new().about_id(entity_id))
+                .await?;
 
         entity_ids.extend(
             linked_reflections
@@ -110,20 +113,18 @@ impl TimelineService {
         );
 
         let linked_notes =
-            repositories::note::find(&self.conn, &NoteFilter::new().related_to_id(entity_id))
-                .await?;
+            repositories::note::find(conn, &NoteFilter::new().related_to_id(entity_id)).await?;
 
         entity_ids.extend(linked_notes.iter().map(|n| n.id).collect::<Vec<Uuid>>());
 
         let mut events =
-            repositories::event::find(&self.conn, &EventFilter::new().entity_id_in(entity_ids))
-                .await?;
+            repositories::event::find(conn, &EventFilter::new().entity_id_in(entity_ids)).await?;
 
         events.sort_by_key(|a| a.created_at);
 
         let mut entries = Vec::new();
         for event in events {
-            let entity = self.resolve_entity(&event).await.unwrap_or(None);
+            let entity = self.resolve_entity(conn, &event).await.unwrap_or(None);
             entries.push(TimelineEntry {
                 event_id: event.event_id,
                 entity_id: event.entity_id,
@@ -137,15 +138,19 @@ impl TimelineService {
         Ok(entries)
     }
 
-    async fn resolve_entity(&self, event: &Event) -> Result<Option<TimelineEntity>> {
+    async fn resolve_entity(
+        &self,
+        conn: &Connection,
+        event: &Event,
+    ) -> Result<Option<TimelineEntity>> {
         match event.event_type {
             EventType::TodoItemCreated | EventType::TodoItemStatusChanged => {
-                let item = repositories::todo_item::find_by_id(&self.conn, event.entity_id).await?;
+                let item = repositories::todo_item::find_by_id(conn, event.entity_id).await?;
                 Ok(item.map(TimelineEntity::TodoItem))
             }
             EventType::MeetingCreated => {
                 let meeting = repositories::meeting::find_one(
-                    &self.conn,
+                    conn,
                     &MeetingFilter::new().id(event.entity_id),
                 )
                 .await?;
@@ -153,7 +158,7 @@ impl TimelineService {
             }
             EventType::ReflectionCreated => {
                 let reflection = repositories::reflection::find_one(
-                    &self.conn,
+                    conn,
                     &ReflectionFilter::new().id(event.entity_id),
                 )
                 .await?;
@@ -167,11 +172,9 @@ impl TimelineService {
                     .await)
             }
             EventType::NoteCreated => {
-                let note = repositories::note::find_one(
-                    &self.conn,
-                    &NoteFilter::new().id(event.entity_id),
-                )
-                .await?;
+                let note =
+                    repositories::note::find_one(conn, &NoteFilter::new().id(event.entity_id))
+                        .await?;
                 Ok(self
                     .attach_content(note, |n, content| {
                         TimelineEntity::Note(NoteWithContent { note: n, content })
@@ -180,7 +183,7 @@ impl TimelineService {
             }
             EventType::SummaryCreated | EventType::SummaryUpdated => {
                 let summary = repositories::summary::find_one(
-                    &self.conn,
+                    conn,
                     &repositories::summary::SummaryFilter::new().id(event.entity_id),
                 )
                 .await?;
@@ -219,7 +222,7 @@ impl TimelineService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema;
+    use crate::db::Database;
     use crate::services::meeting::MeetingService;
     use crate::services::note::NoteService;
     use crate::services::reflection::ReflectionService;
@@ -227,45 +230,47 @@ mod tests {
     use chrono::Duration;
     use tempfile::tempdir;
 
-    async fn setup() -> (TimelineService, Connection, PathBuf, tempfile::TempDir) {
-        let db = turso::Builder::new_local(":memory:")
-            .experimental_custom_types(true)
-            .build()
+    async fn setup() -> (
+        TimelineService,
+        PathBuf,
+        PathBuf,
+        tempfile::TempDir,
+        tempfile::TempDir,
+    ) {
+        let db_dir = tempdir().expect("create tempdir failed");
+        let db_path = db_dir.path().join("test.db");
+        let _db = Database::open(db_path.to_str().expect("path is valid utf-8"))
             .await
-            .expect("db build failed");
-        let conn = db.connect().expect("db connect failed");
-        schema::init_schema(&conn)
-            .await
-            .expect("schema init failed");
+            .expect("db open failed");
         let root_dir = tempdir().expect("create tempdir failed");
         let root_path = root_dir.path().to_path_buf();
-        let service = TimelineService::new(conn.clone(), root_path.clone());
-        (service, conn, root_path, root_dir)
+        let service = TimelineService::new(db_path.clone(), root_path.clone());
+        (service, db_path, root_path, db_dir, root_dir)
     }
 
     #[tokio::test]
     async fn get_timeline_returns_events_with_entities() {
-        let (svc, conn, root_path, _root_dir) = setup().await;
+        let (svc, db_path, root_path, _db_dir, _root_dir) = setup().await;
 
-        let mut todo_svc = TodoService::new(conn.clone());
+        let mut todo_svc = TodoService::new(db_path.clone());
         let todo = todo_svc
             .create_todo_item("test todo")
             .await
             .expect("create todo failed");
 
-        let mut meeting_svc = MeetingService::new(conn.clone());
+        let mut meeting_svc = MeetingService::new(db_path.clone());
         let meeting = meeting_svc
             .create_meeting("test meeting", Utc::now())
             .await
             .expect("create meeting failed");
 
-        let mut reflection_svc = ReflectionService::new(conn.clone(), root_path.clone());
+        let mut reflection_svc = ReflectionService::new(db_path.clone(), root_path.clone());
         let reflection = reflection_svc
             .create_reflection(None)
             .await
             .expect("create reflection failed");
 
-        let mut note_svc = NoteService::new(conn.clone(), root_path.clone());
+        let mut note_svc = NoteService::new(db_path.clone(), root_path.clone());
         let note = note_svc
             .create_note(None)
             .await
@@ -315,9 +320,9 @@ mod tests {
 
     #[tokio::test]
     async fn get_timeline_includes_file_content() {
-        let (svc, conn, root_path, _root_dir) = setup().await;
+        let (svc, db_path, root_path, _db_dir, _root_dir) = setup().await;
 
-        let mut reflection_svc = ReflectionService::new(conn.clone(), root_path.clone());
+        let mut reflection_svc = ReflectionService::new(db_path.clone(), root_path.clone());
         let reflection = reflection_svc
             .create_reflection(None)
             .await
@@ -328,7 +333,7 @@ mod tests {
             .await
             .expect("write failed");
 
-        let mut note_svc = NoteService::new(conn.clone(), root_path.clone());
+        let mut note_svc = NoteService::new(db_path.clone(), root_path.clone());
         let note = note_svc
             .create_note(None)
             .await
@@ -374,9 +379,9 @@ mod tests {
 
     #[tokio::test]
     async fn get_timeline_handles_missing_file() {
-        let (svc, conn, root_path, _root_dir) = setup().await;
+        let (svc, db_path, root_path, _db_dir, _root_dir) = setup().await;
 
-        let mut reflection_svc = ReflectionService::new(conn.clone(), root_path.clone());
+        let mut reflection_svc = ReflectionService::new(db_path.clone(), root_path.clone());
         let reflection = reflection_svc
             .create_reflection(None)
             .await
@@ -416,10 +421,13 @@ mod tests {
 
     #[tokio::test]
     async fn get_timeline_handles_deleted_entity() {
-        let (svc, mut conn, _root_path, _root_dir) = setup().await;
+        let (svc, db_path, _root_path, _db_dir, _root_dir) = setup().await;
 
         let fake_id = Uuid::now_v7();
-        let tx = conn.transaction().await.expect("tx begin failed");
+        let mut db = Database::open(db_path.to_str().expect("path is valid utf-8"))
+            .await
+            .expect("db open failed");
+        let tx = db.conn_mut().transaction().await.expect("tx begin failed");
         tx.execute(
             "INSERT INTO event (event_id, entity_id, event_type, metadata, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
             (
@@ -434,6 +442,7 @@ mod tests {
         .await
         .expect("insert failed");
         tx.commit().await.expect("commit failed");
+        drop(db);
 
         let now = Utc::now();
         let start = now - Duration::hours(1);
@@ -463,14 +472,17 @@ mod tests {
 
     #[tokio::test]
     async fn get_timeline_orders_oldest_first() {
-        let (svc, mut conn, _root_path, _root_dir) = setup().await;
+        let (svc, db_path, _root_path, _db_dir, _root_dir) = setup().await;
 
         let now = Utc::now();
         let t1 = now - Duration::minutes(30);
         let t2 = now - Duration::minutes(20);
         let t3 = now - Duration::minutes(10);
 
-        let tx = conn.transaction().await.expect("tx begin failed");
+        let mut db = Database::open(db_path.to_str().expect("path is valid utf-8"))
+            .await
+            .expect("db open failed");
+        let tx = db.conn_mut().transaction().await.expect("tx begin failed");
 
         tx.execute(
             "INSERT INTO event (event_id, entity_id, event_type, metadata, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -488,6 +500,7 @@ mod tests {
         ).await.expect("insert e3 failed");
 
         tx.commit().await.expect("commit failed");
+        drop(db);
 
         let start = now - Duration::hours(1);
         let end = now + Duration::hours(1);
@@ -523,13 +536,16 @@ mod tests {
 
     #[tokio::test]
     async fn get_timeline_excludes_out_of_range() {
-        let (svc, mut conn, _root_path, _root_dir) = setup().await;
+        let (svc, db_path, _root_path, _db_dir, _root_dir) = setup().await;
 
         let now = Utc::now();
         let start = now - Duration::hours(1);
         let end = now + Duration::hours(1);
 
-        let tx = conn.transaction().await.expect("tx begin failed");
+        let mut db = Database::open(db_path.to_str().expect("path is valid utf-8"))
+            .await
+            .expect("db open failed");
+        let tx = db.conn_mut().transaction().await.expect("tx begin failed");
 
         tx.execute(
             "INSERT INTO event (event_id, entity_id, event_type, metadata, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -547,6 +563,7 @@ mod tests {
         ).await.expect("insert e3 failed");
 
         tx.commit().await.expect("commit failed");
+        drop(db);
 
         let entries = svc
             .get_timeline(start, end)
@@ -558,7 +575,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_timeline_empty_range() {
-        let (svc, _conn, _root_path, _root_dir) = setup().await;
+        let (svc, _db_path, _root_path, _db_dir, _root_dir) = setup().await;
 
         let now = Utc::now();
         let start = now - Duration::hours(1);
@@ -574,9 +591,9 @@ mod tests {
 
     #[tokio::test]
     async fn get_timeline_status_change_event_has_todo_entity() {
-        let (svc, conn, _root_path, _root_dir) = setup().await;
+        let (svc, db_path, _root_path, _db_dir, _root_dir) = setup().await;
 
-        let mut todo_svc = TodoService::new(conn.clone());
+        let mut todo_svc = TodoService::new(db_path.clone());
         let todo = todo_svc
             .create_todo_item("status test")
             .await
@@ -611,11 +628,14 @@ mod tests {
 
     #[tokio::test]
     async fn get_timeline_resolves_summary_entity_with_file_content() {
-        let (svc, mut conn, root_path, _root_dir) = setup().await;
+        let (svc, db_path, root_path, _db_dir, _root_dir) = setup().await;
 
         let summary_id = Uuid::now_v7();
         let ts = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        let tx = conn.transaction().await.expect("tx begin failed");
+        let mut db = Database::open(db_path.to_str().expect("path is valid utf-8"))
+            .await
+            .expect("db open failed");
+        let tx = db.conn_mut().transaction().await.expect("tx begin failed");
         tx.execute(
             "INSERT INTO summary (summary_id, file_path, start, \"end\", created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
             (summary_id.to_string(), "test_summary.md".to_string(), ts.clone(), ts.clone(), ts.clone(), ts.clone()),
@@ -626,6 +646,7 @@ mod tests {
             (Uuid::now_v7().to_string(), summary_id.to_string(), "SUMMARY_CREATED", "{}", ts.clone(), ts.clone()),
         ).await.expect("insert event failed");
         tx.commit().await.expect("commit failed");
+        drop(db);
 
         fs::write(root_path.join("test_summary.md"), "summary content")
             .await
@@ -656,9 +677,9 @@ mod tests {
 
     #[tokio::test]
     async fn get_entity_timeline_returns_direct_events_for_todo() {
-        let (svc, conn, _root_path, _root_dir) = setup().await;
+        let (svc, db_path, _root_path, _db_dir, _root_dir) = setup().await;
 
-        let mut todo_svc = TodoService::new(conn.clone());
+        let mut todo_svc = TodoService::new(db_path.clone());
         let todo = todo_svc
             .create_todo_item("test todo")
             .await
@@ -679,15 +700,15 @@ mod tests {
 
     #[tokio::test]
     async fn get_entity_timeline_includes_linked_reflections() {
-        let (svc, conn, root_path, _root_dir) = setup().await;
+        let (svc, db_path, root_path, _db_dir, _root_dir) = setup().await;
 
-        let mut todo_svc = TodoService::new(conn.clone());
+        let mut todo_svc = TodoService::new(db_path.clone());
         let todo = todo_svc
             .create_todo_item("test todo")
             .await
             .expect("create todo failed");
 
-        let mut reflection_svc = ReflectionService::new(conn.clone(), root_path.clone());
+        let mut reflection_svc = ReflectionService::new(db_path.clone(), root_path.clone());
         let _reflection = reflection_svc
             .create_reflection(Some(todo.id))
             .await
@@ -720,15 +741,15 @@ mod tests {
 
     #[tokio::test]
     async fn get_entity_timeline_includes_linked_notes() {
-        let (svc, conn, root_path, _root_dir) = setup().await;
+        let (svc, db_path, root_path, _db_dir, _root_dir) = setup().await;
 
-        let mut todo_svc = TodoService::new(conn.clone());
+        let mut todo_svc = TodoService::new(db_path.clone());
         let todo = todo_svc
             .create_todo_item("test todo")
             .await
             .expect("create todo failed");
 
-        let mut note_svc = NoteService::new(conn.clone(), root_path.clone());
+        let mut note_svc = NoteService::new(db_path.clone(), root_path.clone());
         let _note = note_svc
             .create_note(Some(todo.id))
             .await
@@ -758,15 +779,15 @@ mod tests {
 
     #[tokio::test]
     async fn get_entity_timeline_includes_file_content_for_linked() {
-        let (svc, conn, root_path, _root_dir) = setup().await;
+        let (svc, db_path, root_path, _db_dir, _root_dir) = setup().await;
 
-        let mut todo_svc = TodoService::new(conn.clone());
+        let mut todo_svc = TodoService::new(db_path.clone());
         let todo = todo_svc
             .create_todo_item("test todo")
             .await
             .expect("create todo failed");
 
-        let mut reflection_svc = ReflectionService::new(conn.clone(), root_path.clone());
+        let mut reflection_svc = ReflectionService::new(db_path.clone(), root_path.clone());
         let reflection = reflection_svc
             .create_reflection(Some(todo.id))
             .await
@@ -800,7 +821,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_entity_timeline_for_nonexistent_entity_returns_empty() {
-        let (svc, _conn, _root_path, _root_dir) = setup().await;
+        let (svc, _db_path, _root_path, _db_dir, _root_dir) = setup().await;
 
         let nonexistent = Uuid::now_v7();
         let entries = svc
@@ -813,9 +834,9 @@ mod tests {
 
     #[tokio::test]
     async fn get_entity_timeline_orders_oldest_first() {
-        let (svc, conn, _root_path, _root_dir) = setup().await;
+        let (svc, db_path, _root_path, _db_dir, _root_dir) = setup().await;
 
-        let mut todo_svc = TodoService::new(conn.clone());
+        let mut todo_svc = TodoService::new(db_path.clone());
         let todo = todo_svc
             .create_todo_item("test todo")
             .await
@@ -839,21 +860,21 @@ mod tests {
 
     #[tokio::test]
     async fn get_entity_timeline_for_meeting() {
-        let (svc, conn, root_path, _root_dir) = setup().await;
+        let (svc, db_path, root_path, _db_dir, _root_dir) = setup().await;
 
-        let mut meeting_svc = MeetingService::new(conn.clone());
+        let mut meeting_svc = MeetingService::new(db_path.clone());
         let meeting = meeting_svc
             .create_meeting("test meeting", Utc::now())
             .await
             .expect("create meeting failed");
 
-        let mut reflection_svc = ReflectionService::new(conn.clone(), root_path.clone());
+        let mut reflection_svc = ReflectionService::new(db_path.clone(), root_path.clone());
         let _reflection = reflection_svc
             .create_reflection(Some(meeting.id))
             .await
             .expect("create reflection failed");
 
-        let mut note_svc = NoteService::new(conn.clone(), root_path.clone());
+        let mut note_svc = NoteService::new(db_path.clone(), root_path.clone());
         let _note = note_svc
             .create_note(Some(meeting.id))
             .await

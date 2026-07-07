@@ -56,14 +56,14 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(conn: turso::Connection, root_dir: PathBuf) -> Self {
+    pub fn new(db_path: PathBuf, root_dir: PathBuf) -> Self {
         let editor_fn = crate::tui::editor::default_editor_fn();
-        let todo_service = TodoService::new(conn.clone());
-        let meeting_service = MeetingService::new(conn.clone());
-        let note_service = NoteService::new(conn.clone(), root_dir.clone());
-        let reflection_service = ReflectionService::new(conn.clone(), root_dir.clone());
-        let timeline_service = TimelineService::new(conn.clone(), root_dir.clone());
-        let summary_service = SummaryService::new(conn, root_dir);
+        let todo_service = TodoService::new(db_path.clone());
+        let meeting_service = MeetingService::new(db_path.clone());
+        let note_service = NoteService::new(db_path.clone(), root_dir.clone());
+        let reflection_service = ReflectionService::new(db_path.clone(), root_dir.clone());
+        let timeline_service = TimelineService::new(db_path.clone(), root_dir.clone());
+        let summary_service = SummaryService::new(db_path, root_dir);
         Self {
             todo_list_view: TodoListView::new(
                 todo_service,
@@ -258,10 +258,10 @@ fn is_global_quit(key: &KeyEvent) -> bool {
 
 async fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    conn: turso::Connection,
+    db_path: PathBuf,
     root_dir: PathBuf,
 ) -> Result<()> {
-    let mut app = App::new(conn, root_dir);
+    let mut app = App::new(db_path, root_dir);
     app.init().await?;
     terminal.draw(|frame| render_app(&mut app, frame))?;
 
@@ -296,13 +296,13 @@ async fn run_app(
     Ok(())
 }
 
-pub async fn run(conn: turso::Connection, root_dir: PathBuf) -> Result<()> {
+pub async fn run(db_path: PathBuf, root_dir: PathBuf) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    let result = run_app(&mut terminal, conn, root_dir).await;
+    let result = run_app(&mut terminal, db_path, root_dir).await;
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -317,13 +317,11 @@ pub async fn run(conn: turso::Connection, root_dir: PathBuf) -> Result<()> {
 mod tests {
     use ratatui::backend::TestBackend;
     use std::sync::Arc;
-    use turso::Builder;
 
     use super::*;
     use crate::models::meeting::Meeting;
     use crate::models::reflection::Reflection;
     use crate::models::todo_item::TodoItem;
-    use crate::schema;
     use chrono::Utc;
     use std::sync::OnceLock;
     use uuid::Uuid;
@@ -340,17 +338,13 @@ mod tests {
 
     async fn test_app() -> App {
         ensure_utc_tz();
-        let db = Builder::new_local(":memory:")
-            .experimental_custom_types(true)
-            .build()
+        let db_dir = tempfile::tempdir().expect("create tempdir failed").keep();
+        let db_path = db_dir.join("test.db");
+        let _db = crate::db::Database::open(db_path.to_str().expect("path is valid utf-8"))
             .await
-            .expect("trouble building the DB");
-        let conn = db.connect().expect("trouble connecting to the db");
-        schema::init_schema(&conn)
-            .await
-            .expect("schema init failed");
+            .expect("db open failed");
         let root_dir = tempfile::tempdir().expect("create tempdir failed").keep();
-        App::new(conn, root_dir)
+        App::new(db_path, root_dir)
     }
 
     fn fixed_item(label: &str) -> TodoItem {

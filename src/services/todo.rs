@@ -1,31 +1,35 @@
 use anyhow::Result;
-use turso::Connection;
+use std::path::PathBuf;
 use uuid::Uuid;
 
+use crate::db::Database;
 use crate::models::event::EventType;
 use crate::models::todo_item::{TodoItem, TodoStatus};
 use crate::repositories;
 
 pub struct TodoService {
-    conn: Connection,
+    db_path: PathBuf,
 }
 
 impl TodoService {
-    pub fn new(conn: Connection) -> Self {
-        Self { conn }
+    pub fn new(db_path: PathBuf) -> Self {
+        Self { db_path }
     }
 
     pub async fn create_todo_item(&mut self, label: &str) -> Result<TodoItem> {
-        let tx = self.conn.transaction().await?;
+        let mut db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let conn = db.conn_mut();
+        let tx = conn.transaction().await?;
         let todo_item = repositories::todo_item::insert(&tx, label).await?;
         repositories::event::insert(&tx, todo_item.id, &EventType::TodoItemCreated, "{}").await?;
         tx.commit().await?;
-
+        db.checkpoint().await?;
         Ok(todo_item)
     }
 
     pub async fn list_todo_items(&self) -> Result<Vec<TodoItem>> {
-        repositories::todo_item::list_active(&self.conn).await
+        let db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        repositories::todo_item::list_active(db.conn()).await
     }
 
     pub async fn update_todo_status(
@@ -33,7 +37,9 @@ impl TodoService {
         id: Uuid,
         new_status: TodoStatus,
     ) -> Result<TodoItem> {
-        let tx = self.conn.transaction().await?;
+        let mut db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let conn = db.conn_mut();
+        let tx = conn.transaction().await?;
         let old_item = repositories::todo_item::get_by_id(&tx, id).await?;
         let updated_item = repositories::todo_item::update_status(&tx, id, &new_status).await?;
         let metadata = serde_json::json!({
@@ -43,38 +49,51 @@ impl TodoService {
         .to_string();
         repositories::event::insert(&tx, id, &EventType::TodoItemStatusChanged, &metadata).await?;
         tx.commit().await?;
+        db.checkpoint().await?;
         Ok(updated_item)
     }
 
     pub async fn list_all_todo_items(&self) -> Result<Vec<TodoItem>> {
-        repositories::todo_item::list_all(&self.conn).await
+        let db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        repositories::todo_item::list_all(db.conn()).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::Database;
     use crate::models::todo_item::TodoStatus;
-    use crate::schema;
     use chrono::Utc;
+    use tempfile::tempdir;
     use uuid::Uuid;
 
-    async fn setup() -> TodoService {
-        let db = turso::Builder::new_local(":memory:")
-            .experimental_custom_types(true)
-            .build()
+    async fn setup() -> (TodoService, PathBuf, tempfile::TempDir) {
+        let dir = tempdir().expect("create tempdir failed");
+        let db_path = dir.path().join("test.db");
+        let _db = Database::open(db_path.to_str().expect("path is valid utf-8"))
             .await
-            .expect("db build failed");
-        let conn = db.connect().expect("db connect failed");
-        schema::init_schema(&conn)
+            .expect("db open failed");
+        let svc = TodoService::new(db_path.clone());
+        (svc, db_path, dir)
+    }
+
+    async fn query_string(db_path: &PathBuf, sql: &str, params: impl turso::IntoParams) -> String {
+        let db = Database::open(db_path.to_str().expect("path is valid utf-8"))
             .await
-            .expect("schema init failed");
-        TodoService::new(conn)
+            .expect("db open failed");
+        let mut rows = db.conn().query(sql, params).await.expect("query failed");
+        let row = rows
+            .next()
+            .await
+            .expect("fetch failed")
+            .expect("row exists");
+        row.get::<String>(0).expect("get string")
     }
 
     #[tokio::test]
     async fn create_todo_item_inserts_row() {
-        let mut svc = setup().await;
+        let (mut svc, _db_path, _dir) = setup().await;
         let item = svc
             .create_todo_item("buy groceries")
             .await
@@ -90,39 +109,24 @@ mod tests {
 
     #[tokio::test]
     async fn create_todo_item_creates_event() {
-        let mut svc = setup().await;
+        let (mut svc, db_path, _dir) = setup().await;
         let item = svc
             .create_todo_item("test event")
             .await
             .expect("create failed");
 
-        let mut rows = svc
-            .conn
-            .query(
-                "SELECT event_type FROM event WHERE entity_id = ?",
-                [item.id.to_string()],
-            )
-            .await
-            .expect("query failed");
-
-        let row = rows
-            .next()
-            .await
-            .expect("row fetch failed")
-            .expect("event not found");
-
-        let event_type_str = row
-            .get_value(0)
-            .expect("value extraction failed")
-            .as_text()
-            .expect("expected text")
-            .to_string();
-        assert_eq!(event_type_str, "TODO_ITEM_CREATED");
+        let event_type = query_string(
+            &db_path,
+            "SELECT event_type FROM event WHERE entity_id = ?",
+            [item.id.to_string()],
+        )
+        .await;
+        assert_eq!(event_type, "TODO_ITEM_CREATED");
     }
 
     #[tokio::test]
     async fn list_todo_items_excludes_done() {
-        let mut svc = setup().await;
+        let (mut svc, db_path, _dir) = setup().await;
         svc.create_todo_item("new item")
             .await
             .expect("create failed");
@@ -130,9 +134,11 @@ mod tests {
             .await
             .expect("create failed");
 
-        let mut conn = svc.conn.clone();
         let now = Utc::now();
-        let tx = conn.transaction().await.expect("tx begin failed");
+        let mut db = Database::open(db_path.to_str().expect("path is valid utf-8"))
+            .await
+            .expect("db open failed");
+        let tx = db.conn_mut().transaction().await.expect("tx begin failed");
         tx.execute(
             "INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at) VALUES (?, ?, 'DONE', ?, ?)",
             (
@@ -145,6 +151,7 @@ mod tests {
         .await
         .expect("insert done item failed");
         tx.commit().await.expect("commit failed");
+        drop(db);
 
         let items = svc.list_todo_items().await.expect("list failed");
         assert_eq!(items.len(), 2);
@@ -153,7 +160,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_todo_items_ordered_by_created_at() {
-        let svc = setup().await;
+        let (svc, db_path, _dir) = setup().await;
 
         let earlier = chrono::DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
             .expect("parse failed")
@@ -162,8 +169,10 @@ mod tests {
             .expect("parse failed")
             .with_timezone(&Utc);
 
-        let mut conn = svc.conn.clone();
-        let tx = conn.transaction().await.expect("tx begin failed");
+        let mut db = Database::open(db_path.to_str().expect("path is valid utf-8"))
+            .await
+            .expect("db open failed");
+        let tx = db.conn_mut().transaction().await.expect("tx begin failed");
         tx.execute(
             "INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at) VALUES (?, 'later_item', 'NEW', ?, ?)",
             (
@@ -185,6 +194,7 @@ mod tests {
         .await
         .expect("insert earlier failed");
         tx.commit().await.expect("commit failed");
+        drop(db);
 
         let items = svc.list_todo_items().await.expect("list failed");
         assert_eq!(items.len(), 2);
@@ -194,7 +204,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_todo_item_is_atomic() {
-        let mut svc = setup().await;
+        let (mut svc, db_path, _dir) = setup().await;
         let item = svc
             .create_todo_item("atomic test")
             .await
@@ -204,31 +214,18 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].label, "atomic test");
 
-        let mut rows = svc
-            .conn
-            .query(
-                "SELECT entity_id FROM event WHERE entity_id = ?",
-                [item.id.to_string()],
-            )
-            .await
-            .expect("query failed");
-        let row = rows
-            .next()
-            .await
-            .expect("row fetch failed")
-            .expect("event not found");
-        let entity_id_str = row
-            .get_value(0)
-            .expect("value extraction failed")
-            .as_text()
-            .expect("expected text")
-            .to_string();
-        assert_eq!(entity_id_str, item.id.to_string());
+        let entity_id = query_string(
+            &db_path,
+            "SELECT entity_id FROM event WHERE entity_id = ?",
+            [item.id.to_string()],
+        )
+        .await;
+        assert_eq!(entity_id, item.id.to_string());
     }
 
     #[tokio::test]
     async fn create_todo_item_with_special_chars() {
-        let mut svc = setup().await;
+        let (mut svc, _db_path, _dir) = setup().await;
         let label = "buy milk & eggs (2x) — urgent!";
         svc.create_todo_item(label).await.expect("create failed");
 
@@ -239,7 +236,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_todo_item_with_long_label() {
-        let mut svc = setup().await;
+        let (mut svc, _db_path, _dir) = setup().await;
         let label = "a".repeat(250);
         svc.create_todo_item(&label).await.expect("create failed");
 
@@ -251,7 +248,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_todo_status_changes_status() {
-        let mut svc = setup().await;
+        let (mut svc, _db_path, _dir) = setup().await;
         let item = svc
             .create_todo_item("test item")
             .await
@@ -267,7 +264,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_todo_status_creates_event_with_metadata() {
-        let mut svc = setup().await;
+        let (mut svc, db_path, _dir) = setup().await;
         let item = svc
             .create_todo_item("test item")
             .await
@@ -277,8 +274,11 @@ mod tests {
             .await
             .expect("update failed");
 
-        let mut rows = svc
-            .conn
+        let db = Database::open(db_path.to_str().expect("path is valid utf-8"))
+            .await
+            .expect("db open failed");
+        let mut rows = db
+            .conn()
             .query(
                 "SELECT event_type, metadata FROM event WHERE entity_id = ? AND event_type = 'TODO_ITEM_STATUS_CHANGED'",
                 [item.id.to_string()],
@@ -292,20 +292,10 @@ mod tests {
             .expect("row fetch failed")
             .expect("status change event not found");
 
-        let event_type_str = row
-            .get_value(0)
-            .expect("value extraction failed")
-            .as_text()
-            .expect("expected text")
-            .to_string();
+        let event_type_str: String = row.get(0).expect("get event_type");
         assert_eq!(event_type_str, "TODO_ITEM_STATUS_CHANGED");
 
-        let metadata_str = row
-            .get_value(1)
-            .expect("value extraction failed")
-            .as_text()
-            .expect("expected text")
-            .to_string();
+        let metadata_str: String = row.get(1).expect("get metadata");
         let metadata: serde_json::Value =
             serde_json::from_str(&metadata_str).expect("invalid json");
         assert_eq!(metadata["old_status"], "NEW");
@@ -314,7 +304,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_todo_status_updates_updated_at() {
-        let mut svc = setup().await;
+        let (mut svc, _db_path, _dir) = setup().await;
         let item = svc
             .create_todo_item("test item")
             .await
@@ -332,7 +322,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_todo_status_reverse_transition() {
-        let mut svc = setup().await;
+        let (mut svc, _db_path, _dir) = setup().await;
         let item = svc
             .create_todo_item("test item")
             .await
@@ -361,7 +351,9 @@ impl TodoService {
         id: Uuid,
         timestamp: &str,
     ) -> Result<TodoItem> {
-        let tx = self.conn.transaction().await?;
+        let mut db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let conn = db.conn_mut();
+        let tx = conn.transaction().await?;
         tx.execute(
             "INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at) VALUES (?, ?, 'NEW', ?, ?)",
             (id.to_string(), label.to_string(), timestamp.to_string(), timestamp.to_string()),
@@ -373,7 +365,9 @@ impl TodoService {
         )
         .await?;
         tx.commit().await?;
-        let item = repositories::todo_item::find_by_id(&self.conn, id)
+        drop(db);
+        let db2 = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let item = repositories::todo_item::find_by_id(db2.conn(), id)
             .await?
             .expect("todo should exist after insert");
         Ok(item)

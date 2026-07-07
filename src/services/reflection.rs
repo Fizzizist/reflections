@@ -2,9 +2,9 @@ use anyhow::Result;
 use chrono::Utc;
 use std::path::PathBuf;
 use tokio::fs::{self, create_dir_all};
-use turso::Connection;
 use uuid::Uuid;
 
+use crate::db::Database;
 use crate::models::DiffEntry;
 use crate::models::event::EventType;
 use crate::models::reflection::Reflection;
@@ -15,13 +15,13 @@ use crate::services::tag;
 
 #[derive(Clone)]
 pub struct ReflectionService {
-    conn: Connection,
+    db_path: PathBuf,
     root_dir: PathBuf,
 }
 
 impl ReflectionService {
-    pub fn new(conn: Connection, root_dir: PathBuf) -> Self {
-        Self { conn, root_dir }
+    pub fn new(db_path: PathBuf, root_dir: PathBuf) -> Self {
+        Self { db_path, root_dir }
     }
 
     pub async fn create_reflection(&mut self, about_id: Option<Uuid>) -> Result<Reflection> {
@@ -32,12 +32,15 @@ impl ReflectionService {
         let relative_path = format!("{}/{}", date_dir, file_name);
         let full_path = self.full_path(&relative_path);
 
-        let tx = self.conn.transaction().await?;
+        let mut db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let conn = db.conn_mut();
+        let tx = conn.transaction().await?;
         let reflection =
             repositories::reflection::insert(&tx, id, about_id, &relative_path).await?;
         repositories::event::insert(&tx, reflection.id, &EventType::ReflectionCreated, "{}")
             .await?;
         tx.commit().await?;
+        db.checkpoint().await?;
 
         let dir_path = full_path.parent().expect("full_path has a parent");
         create_dir_all(dir_path).await?;
@@ -48,7 +51,10 @@ impl ReflectionService {
 
     pub async fn cleanup_reflection(&mut self, id: Uuid) -> Result<()> {
         let reflection = {
-            let tx = self.conn.transaction().await?;
+            let mut db =
+                Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+            let conn = db.conn_mut();
+            let tx = conn.transaction().await?;
             let reflection = repositories::reflection::get_by_id(&tx, id).await?;
             tx.commit().await?;
             reflection
@@ -61,10 +67,14 @@ impl ReflectionService {
         };
 
         if is_empty_or_missing {
-            let tx = self.conn.transaction().await?;
+            let mut db =
+                Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+            let conn = db.conn_mut();
+            let tx = conn.transaction().await?;
             repositories::reflection::delete(&tx, id).await?;
             repositories::event::delete_by_entity_id(&tx, id).await?;
             tx.commit().await?;
+            db.checkpoint().await?;
 
             if let Err(e) = fs::remove_file(&full_path).await
                 && e.kind() != std::io::ErrorKind::NotFound
@@ -72,29 +82,35 @@ impl ReflectionService {
                 return Err(e.into());
             }
         } else {
-            tag::sync_tags_from_file(&mut self.conn, id, &full_path).await?;
+            let mut db =
+                Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+            let conn = db.conn_mut();
+            tag::sync_tags_from_file(conn, id, &full_path).await?;
+            db.checkpoint().await?;
         }
 
         Ok(())
     }
 
     pub async fn list_reflections(&self) -> Result<Vec<Reflection>> {
-        repositories::reflection::list_ordered_by_updated_at(&self.conn).await
+        let db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        repositories::reflection::list_ordered_by_updated_at(db.conn()).await
     }
 
     pub async fn resolve_label(&self, reflection: &Reflection) -> Result<String> {
+        let db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let conn = db.conn();
         match reflection.about_id {
             None => Ok(format!(
                 "General Reflection {}",
                 reflection.created_at.format("%Y-%m-%d %H:%M")
             )),
             Some(id) => {
-                if let Some(item) = repositories::todo_item::find_by_id(&self.conn, id).await? {
+                if let Some(item) = repositories::todo_item::find_by_id(conn, id).await? {
                     return Ok(format!("TODO Item Reflection {}", item.label));
                 }
                 if let Some(meeting) =
-                    repositories::meeting::find_one(&self.conn, &MeetingFilter::new().id(id))
-                        .await?
+                    repositories::meeting::find_one(conn, &MeetingFilter::new().id(id)).await?
                 {
                     return Ok(format!("Meeting Reflection {}", meeting.name));
                 }
@@ -127,7 +143,6 @@ impl EditableEntity for ReflectionService {
     }
 
     async fn post_edit(&mut self, _id: Uuid, _diff: Vec<DiffEntry>) -> Result<()> {
-        // emit updated event and touch reflection
         todo!();
     }
 }
@@ -135,53 +150,68 @@ impl EditableEntity for ReflectionService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema;
+    use crate::db::Database;
     use chrono::Utc;
     use tempfile::tempdir;
 
-    async fn setup() -> (ReflectionService, PathBuf) {
-        let db = turso::Builder::new_local(":memory:")
-            .experimental_custom_types(true)
-            .build()
+    async fn setup() -> (
+        ReflectionService,
+        PathBuf,
+        PathBuf,
+        tempfile::TempDir,
+        tempfile::TempDir,
+    ) {
+        let db_dir = tempdir().expect("create tempdir failed");
+        let db_path = db_dir.path().join("test.db");
+        let _db = Database::open(db_path.to_str().expect("path is valid utf-8"))
             .await
-            .expect("db build failed");
-        let conn = db.connect().expect("db connect failed");
-        schema::init_schema(&conn)
-            .await
-            .expect("schema init failed");
+            .expect("db open failed");
         let root_dir = tempdir().expect("create tempdir failed");
         let root_path = root_dir.path().to_path_buf();
-        let service = ReflectionService::new(conn, root_path.clone());
-        (service, root_path)
+        let service = ReflectionService::new(db_path.clone(), root_path.clone());
+        (service, db_path, root_path, db_dir, root_dir)
+    }
+
+    async fn query_count(db_path: &PathBuf, sql: &str, params: impl turso::IntoParams) -> i64 {
+        let db = Database::open(db_path.to_str().expect("path is valid utf-8"))
+            .await
+            .expect("db open failed");
+        let mut rows = db.conn().query(sql, params).await.expect("query failed");
+        let row = rows
+            .next()
+            .await
+            .expect("fetch failed")
+            .expect("row exists");
+        while rows.next().await.expect("fetch failed").is_some() {}
+        row.get(0).expect("get count")
     }
 
     #[tokio::test]
     async fn create_reflection_inserts_row_and_event() {
-        let (mut svc, _root_dir) = setup().await;
+        let (mut svc, db_path, _root_dir, _db_dir, _root_dir_temp) = setup().await;
 
         let reflection = svc.create_reflection(None).await.expect("create failed");
 
-        let mut rows = svc
-            .conn
-            .query(
-                "SELECT reflection_id FROM reflection WHERE reflection_id = ?",
-                [reflection.id.to_string()],
-            )
-            .await
-            .expect("query failed");
-        assert!(rows.next().await.expect("fetch failed").is_some());
+        let count = query_count(
+            &db_path,
+            "SELECT COUNT(*) FROM reflection WHERE reflection_id = ?",
+            [reflection.id.to_string()],
+        )
+        .await;
+        assert_eq!(count, 1);
 
-        let mut rows = svc
-            .conn
-            .query("SELECT event_type FROM event WHERE entity_id = ? AND event_type = 'REFLECTION_CREATED'", [reflection.id.to_string()])
-            .await
-            .expect("query failed");
-        assert!(rows.next().await.expect("fetch failed").is_some());
+        let count = query_count(
+            &db_path,
+            "SELECT COUNT(*) FROM event WHERE entity_id = ? AND event_type = 'REFLECTION_CREATED'",
+            [reflection.id.to_string()],
+        )
+        .await;
+        assert_eq!(count, 1);
     }
 
     #[tokio::test]
     async fn create_reflection_with_null_about_id() {
-        let (mut svc, _root_dir) = setup().await;
+        let (mut svc, _db_path, _root_dir, _db_dir, _root_dir_temp) = setup().await;
 
         let reflection = svc.create_reflection(None).await.expect("create failed");
 
@@ -190,7 +220,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_reflection_creates_directory() {
-        let (mut svc, root_dir) = setup().await;
+        let (mut svc, _db_path, root_dir, _db_dir, _root_dir_temp) = setup().await;
 
         let _reflection = svc.create_reflection(None).await.expect("create failed");
 
@@ -201,11 +231,11 @@ mod tests {
 
     #[tokio::test]
     async fn create_reflection_creates_empty_file() {
-        let (mut svc, root_dir) = setup().await;
+        let (mut svc, _db_path, root_dir, _db_dir, _root_dir_temp) = setup().await;
 
-        let _reflection = svc.create_reflection(None).await.expect("create failed");
+        let reflection = svc.create_reflection(None).await.expect("create failed");
 
-        let full_path = root_dir.join(&_reflection.file_path);
+        let full_path = root_dir.join(&reflection.file_path);
         assert!(full_path.exists());
         let meta = fs::metadata(&full_path).await.expect("metadata failed");
         assert_eq!(meta.len(), 0);
@@ -213,7 +243,7 @@ mod tests {
 
     #[tokio::test]
     async fn cleanup_reflection_deletes_row_and_file() {
-        let (mut svc, root_dir) = setup().await;
+        let (mut svc, db_path, root_dir, _db_dir, _root_dir_temp) = setup().await;
 
         let reflection = svc.create_reflection(None).await.expect("create failed");
 
@@ -224,32 +254,28 @@ mod tests {
             .await
             .expect("cleanup failed");
 
-        let mut rows = svc
-            .conn
-            .query(
-                "SELECT reflection_id FROM reflection WHERE reflection_id = ?",
-                [reflection.id.to_string()],
-            )
-            .await
-            .expect("query failed");
-        assert!(rows.next().await.expect("fetch failed").is_none());
+        let count = query_count(
+            &db_path,
+            "SELECT COUNT(*) FROM reflection WHERE reflection_id = ?",
+            [reflection.id.to_string()],
+        )
+        .await;
+        assert_eq!(count, 0);
 
-        let mut rows = svc
-            .conn
-            .query(
-                "SELECT event_id FROM event WHERE entity_id = ?",
-                [reflection.id.to_string()],
-            )
-            .await
-            .expect("query failed");
-        assert!(rows.next().await.expect("fetch failed").is_none());
+        let count = query_count(
+            &db_path,
+            "SELECT COUNT(*) FROM event WHERE entity_id = ?",
+            [reflection.id.to_string()],
+        )
+        .await;
+        assert_eq!(count, 0);
 
         assert!(!full_path.exists());
     }
 
     #[tokio::test]
     async fn cleanup_reflection_preserves_non_empty_file() {
-        let (mut svc, root_dir) = setup().await;
+        let (mut svc, db_path, root_dir, _db_dir, _root_dir_temp) = setup().await;
 
         let reflection = svc.create_reflection(None).await.expect("create failed");
 
@@ -269,7 +295,10 @@ mod tests {
         let content = fs::read_to_string(&full_path).await.expect("read failed");
         assert_eq!(content, "reflection content");
 
-        let tags = repositories::tag::find_tags_for_entity(&svc.conn, reflection.id)
+        let db = Database::open(db_path.to_str().expect("path is valid utf-8"))
+            .await
+            .expect("db open failed");
+        let tags = repositories::tag::find_tags_for_entity(db.conn(), reflection.id)
             .await
             .expect("find_tags_for_entity failed");
         assert_eq!(
@@ -281,7 +310,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_reflections_ordered_by_updated_at() {
-        let (mut svc, _root_dir) = setup().await;
+        let (mut svc, _db_path, _root_dir, _db_dir, _root_dir_temp) = setup().await;
 
         let r1 = svc.create_reflection(None).await.expect("create r1 failed");
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -296,14 +325,17 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_label_for_todo_reflection() {
-        let (mut svc, _root_dir) = setup().await;
+        let (mut svc, db_path, _root_dir, _db_dir, _root_dir_temp) = setup().await;
 
-        let mut conn = svc.conn.clone();
-        let tx = conn.transaction().await.expect("tx begin failed");
+        let mut db = Database::open(db_path.to_str().expect("path is valid utf-8"))
+            .await
+            .expect("db open failed");
+        let tx = db.conn_mut().transaction().await.expect("tx begin failed");
         let todo = repositories::todo_item::insert(&tx, "Test Todo")
             .await
             .expect("insert todo failed");
         tx.commit().await.expect("commit failed");
+        drop(db);
 
         let reflection = svc
             .create_reflection(Some(todo.id))
@@ -320,14 +352,17 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_label_for_meeting_reflection() {
-        let (mut svc, _root_dir) = setup().await;
+        let (mut svc, db_path, _root_dir, _db_dir, _root_dir_temp) = setup().await;
 
-        let mut conn = svc.conn.clone();
-        let tx = conn.transaction().await.expect("tx begin failed");
+        let mut db = Database::open(db_path.to_str().expect("path is valid utf-8"))
+            .await
+            .expect("db open failed");
+        let tx = db.conn_mut().transaction().await.expect("tx begin failed");
         let meeting = repositories::meeting::insert(&tx, "Test Meeting", Utc::now())
             .await
             .expect("insert meeting failed");
         tx.commit().await.expect("commit failed");
+        drop(db);
 
         let reflection = svc
             .create_reflection(Some(meeting.id))
@@ -344,7 +379,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_label_for_general_reflection() {
-        let (mut svc, _root_dir) = setup().await;
+        let (mut svc, _db_path, _root_dir, _db_dir, _root_dir_temp) = setup().await;
 
         let reflection = svc.create_reflection(None).await.expect("create failed");
 
@@ -357,7 +392,7 @@ mod tests {
 
     #[tokio::test]
     async fn cleanup_with_tags_preserves_entity_and_links_tags() {
-        let (mut svc, root_dir) = setup().await;
+        let (mut svc, db_path, root_dir, _db_dir, _root_dir_temp) = setup().await;
 
         let reflection = svc.create_reflection(None).await.expect("create failed");
 
@@ -374,7 +409,10 @@ mod tests {
         assert_eq!(reflections.len(), 1);
         assert_eq!(reflections[0].id, reflection.id);
 
-        let entity_tags = repositories::tag::find_tags_for_entity(&svc.conn, reflection.id)
+        let db = Database::open(db_path.to_str().expect("path is valid utf-8"))
+            .await
+            .expect("db open failed");
+        let entity_tags = repositories::tag::find_tags_for_entity(db.conn(), reflection.id)
             .await
             .expect("find_tags_for_entity failed");
         assert_eq!(entity_tags.len(), 2);
@@ -385,7 +423,7 @@ mod tests {
 
     #[tokio::test]
     async fn cleanup_empty_deletes_entity_no_tag_rows() {
-        let (mut svc, _root_dir) = setup().await;
+        let (mut svc, db_path, _root_dir, _db_dir, _root_dir_temp) = setup().await;
 
         let reflection = svc.create_reflection(None).await.expect("create failed");
 
@@ -396,24 +434,10 @@ mod tests {
         let reflections = svc.list_reflections().await.expect("list failed");
         assert_eq!(reflections.len(), 0);
 
-        let mut rows = svc
-            .conn
-            .query("SELECT COUNT(*) FROM tag", ())
-            .await
-            .expect("query failed");
-        let row = rows.next().await.expect("fetch failed").expect("no rows");
-        while rows.next().await.expect("fetch failed").is_some() {}
-        let count: i64 = row.get(0).expect("get count failed");
-        assert_eq!(count, 0);
+        let tag_count = query_count(&db_path, "SELECT COUNT(*) FROM tag", ()).await;
+        assert_eq!(tag_count, 0);
 
-        let mut rows = svc
-            .conn
-            .query("SELECT COUNT(*) FROM entity_tag", ())
-            .await
-            .expect("query failed");
-        let row = rows.next().await.expect("fetch failed").expect("no rows");
-        while rows.next().await.expect("fetch failed").is_some() {}
-        let count: i64 = row.get(0).expect("get count failed");
-        assert_eq!(count, 0);
+        let entity_tag_count = query_count(&db_path, "SELECT COUNT(*) FROM entity_tag", ()).await;
+        assert_eq!(entity_tag_count, 0);
     }
 }

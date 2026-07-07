@@ -75,20 +75,10 @@ pub async fn sync_tags_from_file(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema;
-    use turso::Connection;
+    use crate::db::Database;
 
-    async fn setup() -> Connection {
-        let db = turso::Builder::new_local(":memory:")
-            .experimental_custom_types(true)
-            .build()
-            .await
-            .expect("db build failed");
-        let conn = db.connect().expect("db connect failed");
-        schema::init_schema(&conn)
-            .await
-            .expect("schema init failed");
-        conn
+    async fn setup() -> Database {
+        Database::open_in_memory().await.expect("db open failed")
     }
 
     #[test]
@@ -156,27 +146,27 @@ mod tests {
 
     #[tokio::test]
     async fn sync_tags_creates_tags_and_links() {
-        let mut conn = setup().await;
+        let mut db = setup().await;
         let entity_id = Uuid::now_v7();
         let labels = vec!["alpha".to_string(), "beta".to_string()];
 
-        let tx = conn.transaction().await.expect("tx begin failed");
+        let tx = db.conn_mut().transaction().await.expect("tx begin failed");
         sync_tags(&tx, entity_id, &labels)
             .await
             .expect("sync_tags failed");
         tx.commit().await.expect("commit failed");
 
-        let alpha_tag = repositories::tag::find_by_label(&conn, "alpha")
+        let alpha_tag = repositories::tag::find_by_label(db.conn(), "alpha")
             .await
             .expect("find_by_label failed")
             .expect("alpha tag should exist");
 
-        let beta_tag = repositories::tag::find_by_label(&conn, "beta")
+        let beta_tag = repositories::tag::find_by_label(db.conn(), "beta")
             .await
             .expect("find_by_label failed")
             .expect("beta tag should exist");
 
-        let entity_tags = repositories::tag::find_tags_for_entity(&conn, entity_id)
+        let entity_tags = repositories::tag::find_tags_for_entity(db.conn(), entity_id)
             .await
             .expect("find_tags_for_entity failed");
 
@@ -187,33 +177,33 @@ mod tests {
 
     #[tokio::test]
     async fn sync_tags_upserts_existing_tags() {
-        let mut conn = setup().await;
+        let mut db = setup().await;
         let entity_id1 = Uuid::now_v7();
         let entity_id2 = Uuid::now_v7();
 
-        let tx1 = conn.transaction().await.expect("tx1 begin failed");
+        let tx1 = db.conn_mut().transaction().await.expect("tx1 begin failed");
         sync_tags(&tx1, entity_id1, &["alpha".to_string()])
             .await
             .expect("sync_tags failed");
         tx1.commit().await.expect("commit1 failed");
 
-        let tx2 = conn.transaction().await.expect("tx2 begin failed");
+        let tx2 = db.conn_mut().transaction().await.expect("tx2 begin failed");
         sync_tags(&tx2, entity_id2, &["alpha".to_string()])
             .await
             .expect("sync_tags failed");
         tx2.commit().await.expect("commit2 failed");
 
-        let alpha_tag = repositories::tag::find_by_label(&conn, "alpha")
+        let alpha_tag = repositories::tag::find_by_label(db.conn(), "alpha")
             .await
             .expect("find_by_label failed")
             .expect("alpha tag should exist");
 
         assert_eq!(alpha_tag.label, "alpha");
 
-        let tags_for_entity1 = repositories::tag::find_tags_for_entity(&conn, entity_id1)
+        let tags_for_entity1 = repositories::tag::find_tags_for_entity(db.conn(), entity_id1)
             .await
             .expect("find_tags_for_entity failed");
-        let tags_for_entity2 = repositories::tag::find_tags_for_entity(&conn, entity_id2)
+        let tags_for_entity2 = repositories::tag::find_tags_for_entity(db.conn(), entity_id2)
             .await
             .expect("find_tags_for_entity failed");
 
@@ -224,16 +214,16 @@ mod tests {
 
     #[tokio::test]
     async fn sync_tags_failure_rolls_back() {
-        let mut conn = setup().await;
+        let mut db = setup().await;
         let entity_id = Uuid::now_v7();
 
-        let tx = conn.transaction().await.expect("tx begin failed");
+        let tx = db.conn_mut().transaction().await.expect("tx begin failed");
         sync_tags(&tx, entity_id, &["alpha".to_string(), "beta".to_string()])
             .await
             .expect("sync_tags should succeed");
         drop(tx);
 
-        let tags = repositories::tag::find_tags_for_entity(&conn, entity_id)
+        let tags = repositories::tag::find_tags_for_entity(db.conn(), entity_id)
             .await
             .expect("find_tags_for_entity failed");
         assert_eq!(
@@ -242,7 +232,7 @@ mod tests {
             "tags should not persist when transaction is dropped without commit"
         );
 
-        let alpha = repositories::tag::find_by_label(&conn, "alpha")
+        let alpha = repositories::tag::find_by_label(db.conn(), "alpha")
             .await
             .expect("find_by_label failed");
         assert!(alpha.is_none(), "tag row should not persist without commit");
