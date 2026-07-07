@@ -120,7 +120,8 @@ impl SummariesView {
         }
 
         if self.items.is_empty() {
-            let screen = hjkl_splash::start_screen::StartScreen::build(env!("CARGO_PKG_VERSION"));
+            let screen =
+                hjkl_splash::start_screen::StartScreen::build(super::version::app_version());
             splash::render(frame, inner, &screen);
         } else {
             let rows: Vec<Row> = self
