@@ -11,6 +11,7 @@ use crate::repositories;
 use crate::services::editable::EditableEntity;
 use crate::services::tag;
 use crate::with_conn_mut;
+use crate::with_txn;
 
 #[derive(Clone)]
 pub struct NoteService {
@@ -31,8 +32,7 @@ impl NoteService {
         let relative_path = format!("{}/{}", date_dir, file_name);
         let full_path = self.full_path(&relative_path);
 
-        with_conn_mut!(&self.db_path, |conn| {
-            let tx = conn.transaction().await?;
+        with_txn!(&self.db_path, |tx| {
             let note = repositories::note::insert(&tx, id, related_to_id, &relative_path).await?;
             repositories::event::insert(&tx, note.id, &EventType::NoteCreated, "{}").await?;
 
@@ -40,17 +40,14 @@ impl NoteService {
             create_dir_all(dir_path).await?;
             fs::write(&full_path, "").await?;
 
-            tx.commit().await?;
             Ok(note)
         })
     }
 
     pub async fn cleanup_note(&mut self, id: Uuid) -> Result<()> {
-        let (_file_path, full_path) = with_conn_mut!(&self.db_path, |conn| {
-            let tx = conn.transaction().await?;
+        let (_file_path, full_path) = with_txn!(&self.db_path, |tx| {
             let note = repositories::note::get_by_id(&tx, id).await?;
             let file_path = note.file_path.clone();
-            tx.commit().await?;
             let full_path = self.full_path(&file_path);
             Ok((file_path, full_path))
         })?;
@@ -61,11 +58,9 @@ impl NoteService {
         };
 
         if is_empty_or_missing {
-            with_conn_mut!(&self.db_path, |conn| {
-                let tx = conn.transaction().await?;
+            with_txn!(&self.db_path, |tx| {
                 repositories::note::delete(&tx, id).await?;
                 repositories::event::delete_by_entity_id(&tx, id).await?;
-                tx.commit().await?;
                 Ok(())
             })?;
 
@@ -156,6 +151,7 @@ impl EditableEntity for NoteService {
     }
 
     async fn post_edit(&mut self, _id: Uuid, _diff: Vec<DiffEntry>) -> Result<()> {
+        // touch note and emit updated event
         todo!();
     }
 }

@@ -14,7 +14,7 @@ use crate::repositories::summary::SummaryFilter;
 use crate::services::editable::EditableEntity;
 use crate::services::tag;
 use crate::with_conn;
-use crate::with_conn_mut;
+use crate::with_txn;
 
 #[derive(Clone)]
 pub struct SummaryService {
@@ -44,8 +44,7 @@ impl SummaryService {
         let relative_path = format!("{}/{}", date_dir, file_name);
         let full_path = self.full_path(&relative_path);
 
-        with_conn_mut!(&self.db_path, |conn| {
-            let tx = conn.transaction().await?;
+        with_txn!(&self.db_path, |tx| {
             let summary =
                 repositories::summary::insert(&tx, id, &relative_path, start, end).await?;
             repositories::event::insert(&tx, summary.id, &EventType::SummaryCreated, "{}").await?;
@@ -59,7 +58,6 @@ impl SummaryService {
                 tag::sync_tags(&tx, summary.id, &labels).await?;
             }
 
-            tx.commit().await?;
             Ok(summary)
         })
     }
@@ -111,13 +109,11 @@ impl SummaryService {
         summary_id: &Uuid,
         diff: Vec<DiffEntry>,
     ) -> Result<()> {
-        with_conn_mut!(&self.db_path, |conn| {
-            let tx = conn.transaction().await?;
+        with_txn!(&self.db_path, |tx| {
             repositories::summary::touch(&tx, summary_id).await?;
             let metadata = serde_json::to_string(&diff)?;
             repositories::event::insert(&tx, *summary_id, &EventType::SummaryUpdated, &metadata)
                 .await?;
-            tx.commit().await?;
             Ok(())
         })
     }

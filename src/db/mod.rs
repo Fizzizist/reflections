@@ -49,6 +49,27 @@ macro_rules! with_conn_mut {
     }};
 }
 
+#[macro_export]
+macro_rules! with_txn {
+    ($db_path:expr, |$tx:ident| $body:expr) => {{
+        let mut db = $crate::db::Database::open_path($db_path).await?;
+        let result: ::anyhow::Result<_> = {
+            let conn = db.conn_mut();
+            let $tx = conn.transaction().await?;
+            let body_result: ::anyhow::Result<_> = async { $body }.await;
+            match body_result {
+                Ok(v) => {
+                    $tx.commit().await?;
+                    Ok(v)
+                }
+                Err(e) => Err(e),
+            }
+        };
+        db.checkpoint().await.ok();
+        result
+    }};
+}
+
 pub struct Database {
     _db: TursoDatabase,
     conn: Connection,

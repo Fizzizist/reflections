@@ -9,7 +9,7 @@ use crate::models::meeting::Meeting;
 use crate::repositories;
 use crate::repositories::meeting::MeetingFilter;
 use crate::with_conn;
-use crate::with_conn_mut;
+use crate::with_txn;
 
 pub struct MeetingService {
     db_path: PathBuf,
@@ -25,11 +25,9 @@ impl MeetingService {
         name: &str,
         scheduled_at: DateTime<Utc>,
     ) -> Result<Meeting> {
-        with_conn_mut!(&self.db_path, |conn| {
-            let tx = conn.transaction().await?;
+        with_txn!(&self.db_path, |tx| {
             let meeting = repositories::meeting::insert(&tx, name, scheduled_at).await?;
             repositories::event::insert(&tx, meeting.id, &EventType::MeetingCreated, "{}").await?;
-            tx.commit().await?;
             Ok(meeting)
         })
     }
@@ -61,8 +59,7 @@ impl MeetingService {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> Result<Vec<SyncResult>> {
-        with_conn_mut!(&self.db_path, |conn| {
-            let tx = conn.transaction().await?;
+        with_txn!(&self.db_path, |tx| {
             let calendar_events = backend.fetch_meetings(start, end).await?;
 
             let names: Vec<String> = calendar_events.iter().map(|e| e.name.clone()).collect();
@@ -113,7 +110,6 @@ impl MeetingService {
                 }
             }
 
-            tx.commit().await?;
             Ok(results)
         })
     }

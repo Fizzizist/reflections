@@ -6,7 +6,7 @@ use crate::models::event::EventType;
 use crate::models::todo_item::{TodoItem, TodoStatus};
 use crate::repositories;
 use crate::with_conn;
-use crate::with_conn_mut;
+use crate::with_txn;
 
 pub struct TodoService {
     db_path: PathBuf,
@@ -18,12 +18,10 @@ impl TodoService {
     }
 
     pub async fn create_todo_item(&mut self, label: &str) -> Result<TodoItem> {
-        with_conn_mut!(&self.db_path, |conn| {
-            let tx = conn.transaction().await?;
+        with_txn!(&self.db_path, |tx| {
             let todo_item = repositories::todo_item::insert(&tx, label).await?;
             repositories::event::insert(&tx, todo_item.id, &EventType::TodoItemCreated, "{}")
                 .await?;
-            tx.commit().await?;
             Ok(todo_item)
         })
     }
@@ -39,8 +37,7 @@ impl TodoService {
         id: Uuid,
         new_status: TodoStatus,
     ) -> Result<TodoItem> {
-        with_conn_mut!(&self.db_path, |conn| {
-            let tx = conn.transaction().await?;
+        with_txn!(&self.db_path, |tx| {
             let old_item = repositories::todo_item::get_by_id(&tx, id).await?;
             let updated_item = repositories::todo_item::update_status(&tx, id, &new_status).await?;
             let metadata = serde_json::json!({
@@ -50,7 +47,6 @@ impl TodoService {
             .to_string();
             repositories::event::insert(&tx, id, &EventType::TodoItemStatusChanged, &metadata)
                 .await?;
-            tx.commit().await?;
             Ok(updated_item)
         })
     }
@@ -344,8 +340,7 @@ impl TodoService {
         id: Uuid,
         timestamp: &str,
     ) -> Result<TodoItem> {
-        with_conn_mut!(&self.db_path, |conn| {
-            let tx = conn.transaction().await?;
+        with_txn!(&self.db_path, |tx| {
             tx.execute(
                 "INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at) VALUES (?, ?, 'NEW', ?, ?)",
                 (id.to_string(), label.to_string(), timestamp.to_string(), timestamp.to_string()),
@@ -356,7 +351,6 @@ impl TodoService {
                 (Uuid::now_v7().to_string(), id.to_string(), timestamp.to_string(), timestamp.to_string()),
             )
             .await?;
-            tx.commit().await?;
             Ok(())
         })?;
 
