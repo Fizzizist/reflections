@@ -4,13 +4,13 @@ use std::path::PathBuf;
 use tokio::fs::{self, create_dir_all};
 use uuid::Uuid;
 
-use crate::db::Database;
 use crate::models::DiffEntry;
 use crate::models::event::EventType;
 use crate::models::note::Note;
 use crate::repositories;
 use crate::services::editable::EditableEntity;
 use crate::services::tag;
+use crate::with_conn_mut;
 
 #[derive(Clone)]
 pub struct NoteService {
@@ -31,51 +31,54 @@ impl NoteService {
         let relative_path = format!("{}/{}", date_dir, file_name);
         let full_path = self.full_path(&relative_path);
 
-        let mut db = Database::open_path(&self.db_path).await?;
-        let conn = db.conn_mut();
-        let tx = conn.transaction().await?;
-        let note = repositories::note::insert(&tx, id, related_to_id, &relative_path).await?;
-        repositories::event::insert(&tx, note.id, &EventType::NoteCreated, "{}").await?;
+        with_conn_mut!(&self.db_path, |conn| {
+            let tx = conn.transaction().await?;
+            let note = repositories::note::insert(&tx, id, related_to_id, &relative_path).await?;
+            repositories::event::insert(&tx, note.id, &EventType::NoteCreated, "{}").await?;
 
-        let dir_path = full_path.parent().expect("full_path has a parent");
-        create_dir_all(dir_path).await?;
-        fs::write(&full_path, "").await?;
+            let dir_path = full_path.parent().expect("full_path has a parent");
+            create_dir_all(dir_path).await?;
+            fs::write(&full_path, "").await?;
 
-        tx.commit().await?;
-        db.checkpoint().await.ok();
-
-        Ok(note)
+            tx.commit().await?;
+            Ok(note)
+        })
     }
 
     pub async fn cleanup_note(&mut self, id: Uuid) -> Result<()> {
-        let mut db = Database::open_path(&self.db_path).await?;
-        let conn = db.conn_mut();
-        let tx = conn.transaction().await?;
-        let note = repositories::note::get_by_id(&tx, id).await?;
-        let file_path = note.file_path.clone();
-        tx.commit().await?;
+        let (_file_path, full_path) = with_conn_mut!(&self.db_path, |conn| {
+            let tx = conn.transaction().await?;
+            let note = repositories::note::get_by_id(&tx, id).await?;
+            let file_path = note.file_path.clone();
+            tx.commit().await?;
+            let full_path = self.full_path(&file_path);
+            Ok((file_path, full_path))
+        })?;
 
-        let full_path = self.full_path(&file_path);
         let is_empty_or_missing = match fs::metadata(&full_path).await {
             Ok(meta) => meta.len() == 0,
             Err(_) => true,
         };
 
         if is_empty_or_missing {
-            let tx = db.conn_mut().transaction().await?;
-            repositories::note::delete(&tx, id).await?;
-            repositories::event::delete_by_entity_id(&tx, id).await?;
-            tx.commit().await?;
+            with_conn_mut!(&self.db_path, |conn| {
+                let tx = conn.transaction().await?;
+                repositories::note::delete(&tx, id).await?;
+                repositories::event::delete_by_entity_id(&tx, id).await?;
+                tx.commit().await?;
+                Ok(())
+            })?;
 
             if let Err(e) = fs::remove_file(&full_path).await
                 && e.kind() != std::io::ErrorKind::NotFound
             {
                 return Err(e.into());
             }
-            db.checkpoint().await.ok();
         } else {
-            tag::sync_tags_from_file(db.conn_mut(), id, &full_path).await?;
-            db.checkpoint().await.ok();
+            with_conn_mut!(&self.db_path, |conn| {
+                tag::sync_tags_from_file(conn, id, &full_path).await?;
+                Ok(())
+            })?;
         }
 
         Ok(())
@@ -87,7 +90,7 @@ impl NoteService {
 
     #[cfg(test)]
     pub async fn note_count(&self) -> i64 {
-        let db = Database::open_path(&self.db_path)
+        let db = crate::db::Database::open_path(&self.db_path)
             .await
             .expect("db open failed");
         let mut rows = db
@@ -102,7 +105,7 @@ impl NoteService {
 
     #[cfg(test)]
     pub async fn list_notes_for_test(&self) -> Vec<Note> {
-        let db = Database::open_path(&self.db_path)
+        let db = crate::db::Database::open_path(&self.db_path)
             .await
             .expect("db open failed");
         let mut rows = db

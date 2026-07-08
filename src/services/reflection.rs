@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use tokio::fs::{self, create_dir_all};
 use uuid::Uuid;
 
-use crate::db::Database;
 use crate::models::DiffEntry;
 use crate::models::event::EventType;
 use crate::models::reflection::Reflection;
@@ -12,6 +11,8 @@ use crate::repositories;
 use crate::repositories::meeting::MeetingFilter;
 use crate::services::editable::EditableEntity;
 use crate::services::tag;
+use crate::with_conn;
+use crate::with_conn_mut;
 
 #[derive(Clone)]
 pub struct ReflectionService {
@@ -32,33 +33,29 @@ impl ReflectionService {
         let relative_path = format!("{}/{}", date_dir, file_name);
         let full_path = self.full_path(&relative_path);
 
-        let mut db = Database::open_path(&self.db_path).await?;
-        let conn = db.conn_mut();
-        let tx = conn.transaction().await?;
-        let reflection =
-            repositories::reflection::insert(&tx, id, about_id, &relative_path).await?;
-        repositories::event::insert(&tx, reflection.id, &EventType::ReflectionCreated, "{}")
-            .await?;
+        with_conn_mut!(&self.db_path, |conn| {
+            let tx = conn.transaction().await?;
+            let reflection =
+                repositories::reflection::insert(&tx, id, about_id, &relative_path).await?;
+            repositories::event::insert(&tx, reflection.id, &EventType::ReflectionCreated, "{}")
+                .await?;
 
-        let dir_path = full_path.parent().expect("full_path has a parent");
-        create_dir_all(dir_path).await?;
-        fs::write(&full_path, "").await?;
+            let dir_path = full_path.parent().expect("full_path has a parent");
+            create_dir_all(dir_path).await?;
+            fs::write(&full_path, "").await?;
 
-        tx.commit().await?;
-        db.checkpoint().await.ok();
-
-        Ok(reflection)
+            tx.commit().await?;
+            Ok(reflection)
+        })
     }
 
     pub async fn cleanup_reflection(&mut self, id: Uuid) -> Result<()> {
-        let reflection = {
-            let mut db = Database::open_path(&self.db_path).await?;
-            let conn = db.conn_mut();
+        let reflection = with_conn_mut!(&self.db_path, |conn| {
             let tx = conn.transaction().await?;
             let reflection = repositories::reflection::get_by_id(&tx, id).await?;
             tx.commit().await?;
-            reflection
-        };
+            Ok(reflection)
+        })?;
 
         let full_path = self.full_path(&reflection.file_path);
         let is_empty_or_missing = match fs::metadata(&full_path).await {
@@ -67,13 +64,13 @@ impl ReflectionService {
         };
 
         if is_empty_or_missing {
-            let mut db = Database::open_path(&self.db_path).await?;
-            let conn = db.conn_mut();
-            let tx = conn.transaction().await?;
-            repositories::reflection::delete(&tx, id).await?;
-            repositories::event::delete_by_entity_id(&tx, id).await?;
-            tx.commit().await?;
-            db.checkpoint().await.ok();
+            with_conn_mut!(&self.db_path, |conn| {
+                let tx = conn.transaction().await?;
+                repositories::reflection::delete(&tx, id).await?;
+                repositories::event::delete_by_entity_id(&tx, id).await?;
+                tx.commit().await?;
+                Ok(())
+            })?;
 
             if let Err(e) = fs::remove_file(&full_path).await
                 && e.kind() != std::io::ErrorKind::NotFound
@@ -81,43 +78,44 @@ impl ReflectionService {
                 return Err(e.into());
             }
         } else {
-            let mut db = Database::open_path(&self.db_path).await?;
-            let conn = db.conn_mut();
-            tag::sync_tags_from_file(conn, id, &full_path).await?;
-            db.checkpoint().await.ok();
+            with_conn_mut!(&self.db_path, |conn| {
+                tag::sync_tags_from_file(conn, id, &full_path).await?;
+                Ok(())
+            })?;
         }
 
         Ok(())
     }
 
     pub async fn list_reflections(&self) -> Result<Vec<Reflection>> {
-        let db = Database::open_path(&self.db_path).await?;
-        repositories::reflection::list_ordered_by_updated_at(db.conn()).await
+        with_conn!(&self.db_path, |conn| {
+            repositories::reflection::list_ordered_by_updated_at(conn).await
+        })
     }
 
     pub async fn resolve_label(&self, reflection: &Reflection) -> Result<String> {
-        let db = Database::open_path(&self.db_path).await?;
-        let conn = db.conn();
-        match reflection.about_id {
-            None => Ok(format!(
-                "General Reflection {}",
-                reflection.created_at.format("%Y-%m-%d %H:%M")
-            )),
-            Some(id) => {
-                if let Some(item) = repositories::todo_item::find_by_id(conn, id).await? {
-                    return Ok(format!("TODO Item Reflection {}", item.label));
-                }
-                if let Some(meeting) =
-                    repositories::meeting::find_one(conn, &MeetingFilter::new().id(id)).await?
-                {
-                    return Ok(format!("Meeting Reflection {}", meeting.name));
-                }
-                Ok(format!(
+        with_conn!(&self.db_path, |conn| {
+            match reflection.about_id {
+                None => Ok(format!(
                     "General Reflection {}",
                     reflection.created_at.format("%Y-%m-%d %H:%M")
-                ))
+                )),
+                Some(id) => {
+                    if let Some(item) = repositories::todo_item::find_by_id(conn, id).await? {
+                        return Ok(format!("TODO Item Reflection {}", item.label));
+                    }
+                    if let Some(meeting) =
+                        repositories::meeting::find_one(conn, &MeetingFilter::new().id(id)).await?
+                    {
+                        return Ok(format!("Meeting Reflection {}", meeting.name));
+                    }
+                    Ok(format!(
+                        "General Reflection {}",
+                        reflection.created_at.format("%Y-%m-%d %H:%M")
+                    ))
+                }
             }
-        }
+        })
     }
 
     pub fn full_path(&self, file_path: &str) -> std::path::PathBuf {

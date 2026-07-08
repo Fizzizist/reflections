@@ -29,6 +29,26 @@ pub fn classify_db_error(e: TursoError) -> anyhow::Error {
     }
 }
 
+#[macro_export]
+macro_rules! with_conn {
+    ($db_path:expr, |$conn:ident| $body:expr) => {{
+        let db = $crate::db::Database::open_path($db_path).await?;
+        let $conn = db.conn();
+        $body
+    }};
+}
+
+#[macro_export]
+macro_rules! with_conn_mut {
+    ($db_path:expr, |$conn:ident| $body:expr) => {{
+        let mut db = $crate::db::Database::open_path($db_path).await?;
+        let $conn = db.conn_mut();
+        let result: ::anyhow::Result<_> = async { $body }.await;
+        db.checkpoint().await.ok();
+        result
+    }};
+}
+
 pub struct Database {
     _db: TursoDatabase,
     conn: Connection,

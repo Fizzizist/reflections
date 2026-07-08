@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use tokio::fs;
 use uuid::Uuid;
 
-use crate::db::Database;
 use crate::models::event::{Event, EventType};
 use crate::models::meeting::Meeting;
 use crate::models::note::Note;
@@ -18,6 +17,7 @@ use crate::repositories::meeting::MeetingFilter;
 use crate::repositories::note::NoteFilter;
 use crate::repositories::reflection::ReflectionFilter;
 use crate::services::editable::EditableEntityRecord;
+use crate::with_conn;
 use turso::Connection;
 
 #[derive(Serialize)]
@@ -78,64 +78,65 @@ impl TimelineService {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> Result<Vec<TimelineEntry>> {
-        let db = Database::open_path(&self.db_path).await?;
-        let conn = db.conn();
-        let events = repositories::event::list_by_date_range(conn, start, end).await?;
-        let mut entries = Vec::new();
-        for event in events {
-            let entity = self.resolve_entity(conn, &event).await?;
-            entries.push(TimelineEntry {
-                event_id: event.event_id,
-                entity_id: event.entity_id,
-                event_type: event.event_type,
-                metadata: event.metadata,
-                created_at: event.created_at,
-                updated_at: event.updated_at,
-                entity,
-            });
-        }
-        Ok(entries)
+        with_conn!(&self.db_path, |conn| {
+            let events = repositories::event::list_by_date_range(conn, start, end).await?;
+            let mut entries = Vec::new();
+            for event in events {
+                let entity = self.resolve_entity(conn, &event).await?;
+                entries.push(TimelineEntry {
+                    event_id: event.event_id,
+                    entity_id: event.entity_id,
+                    event_type: event.event_type,
+                    metadata: event.metadata,
+                    created_at: event.created_at,
+                    updated_at: event.updated_at,
+                    entity,
+                });
+            }
+            Ok(entries)
+        })
     }
 
     pub async fn get_entity_timeline(&self, entity_id: Uuid) -> Result<Vec<TimelineEntry>> {
-        let db = Database::open_path(&self.db_path).await?;
-        let conn = db.conn();
-        let mut entity_ids = vec![entity_id];
-        let linked_reflections =
-            repositories::reflection::find(conn, &ReflectionFilter::new().about_id(entity_id))
-                .await?;
+        with_conn!(&self.db_path, |conn| {
+            let mut entity_ids = vec![entity_id];
+            let linked_reflections =
+                repositories::reflection::find(conn, &ReflectionFilter::new().about_id(entity_id))
+                    .await?;
 
-        entity_ids.extend(
-            linked_reflections
-                .iter()
-                .map(|r| r.id)
-                .collect::<Vec<Uuid>>(),
-        );
+            entity_ids.extend(
+                linked_reflections
+                    .iter()
+                    .map(|r| r.id)
+                    .collect::<Vec<Uuid>>(),
+            );
 
-        let linked_notes =
-            repositories::note::find(conn, &NoteFilter::new().related_to_id(entity_id)).await?;
+            let linked_notes =
+                repositories::note::find(conn, &NoteFilter::new().related_to_id(entity_id)).await?;
 
-        entity_ids.extend(linked_notes.iter().map(|n| n.id).collect::<Vec<Uuid>>());
+            entity_ids.extend(linked_notes.iter().map(|n| n.id).collect::<Vec<Uuid>>());
 
-        let mut events =
-            repositories::event::find(conn, &EventFilter::new().entity_id_in(entity_ids)).await?;
+            let mut events =
+                repositories::event::find(conn, &EventFilter::new().entity_id_in(entity_ids))
+                    .await?;
 
-        events.sort_by_key(|a| a.created_at);
+            events.sort_by_key(|a| a.created_at);
 
-        let mut entries = Vec::new();
-        for event in events {
-            let entity = self.resolve_entity(conn, &event).await?;
-            entries.push(TimelineEntry {
-                event_id: event.event_id,
-                entity_id: event.entity_id,
-                event_type: event.event_type,
-                metadata: event.metadata,
-                created_at: event.created_at,
-                updated_at: event.updated_at,
-                entity,
-            });
-        }
-        Ok(entries)
+            let mut entries = Vec::new();
+            for event in events {
+                let entity = self.resolve_entity(conn, &event).await?;
+                entries.push(TimelineEntry {
+                    event_id: event.event_id,
+                    entity_id: event.entity_id,
+                    event_type: event.event_type,
+                    metadata: event.metadata,
+                    created_at: event.created_at,
+                    updated_at: event.updated_at,
+                    entity,
+                });
+            }
+            Ok(entries)
+        })
     }
 
     async fn resolve_entity(

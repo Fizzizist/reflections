@@ -2,10 +2,11 @@ use anyhow::Result;
 use std::path::PathBuf;
 use uuid::Uuid;
 
-use crate::db::Database;
 use crate::models::event::EventType;
 use crate::models::todo_item::{TodoItem, TodoStatus};
 use crate::repositories;
+use crate::with_conn;
+use crate::with_conn_mut;
 
 pub struct TodoService {
     db_path: PathBuf,
@@ -17,19 +18,20 @@ impl TodoService {
     }
 
     pub async fn create_todo_item(&mut self, label: &str) -> Result<TodoItem> {
-        let mut db = Database::open_path(&self.db_path).await?;
-        let conn = db.conn_mut();
-        let tx = conn.transaction().await?;
-        let todo_item = repositories::todo_item::insert(&tx, label).await?;
-        repositories::event::insert(&tx, todo_item.id, &EventType::TodoItemCreated, "{}").await?;
-        tx.commit().await?;
-        db.checkpoint().await.ok();
-        Ok(todo_item)
+        with_conn_mut!(&self.db_path, |conn| {
+            let tx = conn.transaction().await?;
+            let todo_item = repositories::todo_item::insert(&tx, label).await?;
+            repositories::event::insert(&tx, todo_item.id, &EventType::TodoItemCreated, "{}")
+                .await?;
+            tx.commit().await?;
+            Ok(todo_item)
+        })
     }
 
     pub async fn list_todo_items(&self) -> Result<Vec<TodoItem>> {
-        let db = Database::open_path(&self.db_path).await?;
-        repositories::todo_item::list_active(db.conn()).await
+        with_conn!(&self.db_path, |conn| {
+            repositories::todo_item::list_active(conn).await
+        })
     }
 
     pub async fn update_todo_status(
@@ -37,25 +39,26 @@ impl TodoService {
         id: Uuid,
         new_status: TodoStatus,
     ) -> Result<TodoItem> {
-        let mut db = Database::open_path(&self.db_path).await?;
-        let conn = db.conn_mut();
-        let tx = conn.transaction().await?;
-        let old_item = repositories::todo_item::get_by_id(&tx, id).await?;
-        let updated_item = repositories::todo_item::update_status(&tx, id, &new_status).await?;
-        let metadata = serde_json::json!({
-            "old_status": old_item.status.to_string(),
-            "new_status": new_status.to_string()
+        with_conn_mut!(&self.db_path, |conn| {
+            let tx = conn.transaction().await?;
+            let old_item = repositories::todo_item::get_by_id(&tx, id).await?;
+            let updated_item = repositories::todo_item::update_status(&tx, id, &new_status).await?;
+            let metadata = serde_json::json!({
+                "old_status": old_item.status.to_string(),
+                "new_status": new_status.to_string()
+            })
+            .to_string();
+            repositories::event::insert(&tx, id, &EventType::TodoItemStatusChanged, &metadata)
+                .await?;
+            tx.commit().await?;
+            Ok(updated_item)
         })
-        .to_string();
-        repositories::event::insert(&tx, id, &EventType::TodoItemStatusChanged, &metadata).await?;
-        tx.commit().await?;
-        db.checkpoint().await.ok();
-        Ok(updated_item)
     }
 
     pub async fn list_all_todo_items(&self) -> Result<Vec<TodoItem>> {
-        let db = Database::open_path(&self.db_path).await?;
-        repositories::todo_item::list_all(db.conn()).await
+        with_conn!(&self.db_path, |conn| {
+            repositories::todo_item::list_all(conn).await
+        })
     }
 }
 
@@ -341,25 +344,27 @@ impl TodoService {
         id: Uuid,
         timestamp: &str,
     ) -> Result<TodoItem> {
-        let mut db = Database::open_path(&self.db_path).await?;
-        let conn = db.conn_mut();
-        let tx = conn.transaction().await?;
-        tx.execute(
-            "INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at) VALUES (?, ?, 'NEW', ?, ?)",
-            (id.to_string(), label.to_string(), timestamp.to_string(), timestamp.to_string()),
-        )
-        .await?;
-        tx.execute(
-            "INSERT INTO event (event_id, entity_id, event_type, metadata, created_at, updated_at) VALUES (?, ?, 'TODO_ITEM_CREATED', '{}', ?, ?)",
-            (Uuid::now_v7().to_string(), id.to_string(), timestamp.to_string(), timestamp.to_string()),
-        )
-        .await?;
-        tx.commit().await?;
-        drop(db);
-        let db2 = Database::open_path(&self.db_path).await?;
-        let item = repositories::todo_item::find_by_id(db2.conn(), id)
-            .await?
-            .expect("todo should exist after insert");
-        Ok(item)
+        with_conn_mut!(&self.db_path, |conn| {
+            let tx = conn.transaction().await?;
+            tx.execute(
+                "INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at) VALUES (?, ?, 'NEW', ?, ?)",
+                (id.to_string(), label.to_string(), timestamp.to_string(), timestamp.to_string()),
+            )
+            .await?;
+            tx.execute(
+                "INSERT INTO event (event_id, entity_id, event_type, metadata, created_at, updated_at) VALUES (?, ?, 'TODO_ITEM_CREATED', '{}', ?, ?)",
+                (Uuid::now_v7().to_string(), id.to_string(), timestamp.to_string(), timestamp.to_string()),
+            )
+            .await?;
+            tx.commit().await?;
+            Ok(())
+        })?;
+
+        with_conn!(&self.db_path, |conn| {
+            let item = repositories::todo_item::find_by_id(conn, id)
+                .await?
+                .expect("todo should exist after insert");
+            Ok(item)
+        })
     }
 }

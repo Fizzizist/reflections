@@ -4,11 +4,12 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 use crate::calendar::backend::CalendarBackend;
-use crate::db::Database;
 use crate::models::event::EventType;
 use crate::models::meeting::Meeting;
 use crate::repositories;
 use crate::repositories::meeting::MeetingFilter;
+use crate::with_conn;
+use crate::with_conn_mut;
 
 pub struct MeetingService {
     db_path: PathBuf,
@@ -24,18 +25,16 @@ impl MeetingService {
         name: &str,
         scheduled_at: DateTime<Utc>,
     ) -> Result<Meeting> {
-        let mut db = Database::open_path(&self.db_path).await?;
-        let conn = db.conn_mut();
-        let tx = conn.transaction().await?;
-        let meeting = repositories::meeting::insert(&tx, name, scheduled_at).await?;
-        repositories::event::insert(&tx, meeting.id, &EventType::MeetingCreated, "{}").await?;
-        tx.commit().await?;
-        db.checkpoint().await.ok();
-        Ok(meeting)
+        with_conn_mut!(&self.db_path, |conn| {
+            let tx = conn.transaction().await?;
+            let meeting = repositories::meeting::insert(&tx, name, scheduled_at).await?;
+            repositories::event::insert(&tx, meeting.id, &EventType::MeetingCreated, "{}").await?;
+            tx.commit().await?;
+            Ok(meeting)
+        })
     }
 
     pub async fn list_meetings_for_today(&self) -> Result<Vec<Meeting>> {
-        let db = Database::open_path(&self.db_path).await?;
         let now = Local::now();
         let local_midnight = now
             .date_naive()
@@ -51,7 +50,9 @@ impl MeetingService {
         };
         let end = start + chrono::Duration::days(1);
         let filter = MeetingFilter::new().start(start).end(end);
-        repositories::meeting::find(db.conn(), &filter).await
+        with_conn!(&self.db_path, |conn| {
+            repositories::meeting::find(conn, &filter).await
+        })
     }
 
     pub async fn sync_meetings(
@@ -60,61 +61,61 @@ impl MeetingService {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> Result<Vec<SyncResult>> {
-        let mut db = Database::open_path(&self.db_path).await?;
-        let conn = db.conn_mut();
-        let tx = conn.transaction().await?;
-        let calendar_events = backend.fetch_meetings(start, end).await?;
+        with_conn_mut!(&self.db_path, |conn| {
+            let tx = conn.transaction().await?;
+            let calendar_events = backend.fetch_meetings(start, end).await?;
 
-        let names: Vec<String> = calendar_events.iter().map(|e| e.name.clone()).collect();
-        let existing_meetings =
-            repositories::meeting::find_by_names_in_range(&tx, &names, start, end).await?;
-        let existing_map: std::collections::HashMap<&str, &Meeting> = existing_meetings
-            .iter()
-            .map(|m| (m.name.as_str(), m))
-            .collect();
+            let names: Vec<String> = calendar_events.iter().map(|e| e.name.clone()).collect();
+            let existing_meetings =
+                repositories::meeting::find_by_names_in_range(&tx, &names, start, end).await?;
+            let existing_map: std::collections::HashMap<&str, &Meeting> = existing_meetings
+                .iter()
+                .map(|m| (m.name.as_str(), m))
+                .collect();
 
-        let mut results = Vec::new();
+            let mut results = Vec::new();
 
-        for event in calendar_events {
-            match existing_map.get(event.name.as_str()) {
-                Some(meeting) if meeting.scheduled_at == event.scheduled_at => {
-                    continue;
-                }
-                Some(meeting) => {
-                    let updated_meeting = Meeting {
-                        id: meeting.id,
-                        name: meeting.name.clone(),
-                        scheduled_at: event.scheduled_at,
-                        created_at: meeting.created_at,
-                        updated_at: meeting.updated_at,
-                    };
-                    let updated = repositories::meeting::update(&tx, &updated_meeting).await?;
-                    results.push(SyncResult {
-                        action: SyncAction::Updated,
-                        meeting: updated,
-                    });
-                }
-                None => {
-                    let new_meeting =
-                        repositories::meeting::insert(&tx, &event.name, event.scheduled_at).await?;
-                    repositories::event::insert(
-                        &tx,
-                        new_meeting.id,
-                        &EventType::MeetingCreated,
-                        "{}",
-                    )
-                    .await?;
-                    results.push(SyncResult {
-                        action: SyncAction::Created,
-                        meeting: new_meeting,
-                    });
+            for event in calendar_events {
+                match existing_map.get(event.name.as_str()) {
+                    Some(meeting) if meeting.scheduled_at == event.scheduled_at => {
+                        continue;
+                    }
+                    Some(meeting) => {
+                        let updated_meeting = Meeting {
+                            id: meeting.id,
+                            name: meeting.name.clone(),
+                            scheduled_at: event.scheduled_at,
+                            created_at: meeting.created_at,
+                            updated_at: meeting.updated_at,
+                        };
+                        let updated = repositories::meeting::update(&tx, &updated_meeting).await?;
+                        results.push(SyncResult {
+                            action: SyncAction::Updated,
+                            meeting: updated,
+                        });
+                    }
+                    None => {
+                        let new_meeting =
+                            repositories::meeting::insert(&tx, &event.name, event.scheduled_at)
+                                .await?;
+                        repositories::event::insert(
+                            &tx,
+                            new_meeting.id,
+                            &EventType::MeetingCreated,
+                            "{}",
+                        )
+                        .await?;
+                        results.push(SyncResult {
+                            action: SyncAction::Created,
+                            meeting: new_meeting,
+                        });
+                    }
                 }
             }
-        }
 
-        tx.commit().await?;
-        db.checkpoint().await.ok();
-        Ok(results)
+            tx.commit().await?;
+            Ok(results)
+        })
     }
 }
 

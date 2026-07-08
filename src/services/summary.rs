@@ -6,7 +6,6 @@ use std::path::PathBuf;
 use tokio::fs::{self, create_dir_all};
 use uuid::Uuid;
 
-use crate::db::Database;
 use crate::models::DiffEntry;
 use crate::models::event::EventType;
 use crate::models::summary::Summary;
@@ -14,6 +13,8 @@ use crate::repositories;
 use crate::repositories::summary::SummaryFilter;
 use crate::services::editable::EditableEntity;
 use crate::services::tag;
+use crate::with_conn;
+use crate::with_conn_mut;
 
 #[derive(Clone)]
 pub struct SummaryService {
@@ -43,25 +44,24 @@ impl SummaryService {
         let relative_path = format!("{}/{}", date_dir, file_name);
         let full_path = self.full_path(&relative_path);
 
-        let mut db = Database::open_path(&self.db_path).await?;
-        let conn = db.conn_mut();
-        let tx = conn.transaction().await?;
-        let summary = repositories::summary::insert(&tx, id, &relative_path, start, end).await?;
-        repositories::event::insert(&tx, summary.id, &EventType::SummaryCreated, "{}").await?;
+        with_conn_mut!(&self.db_path, |conn| {
+            let tx = conn.transaction().await?;
+            let summary =
+                repositories::summary::insert(&tx, id, &relative_path, start, end).await?;
+            repositories::event::insert(&tx, summary.id, &EventType::SummaryCreated, "{}").await?;
 
-        let dir_path = full_path.parent().expect("full_path has a parent");
-        create_dir_all(dir_path).await?;
-        fs::write(&full_path, content).await?;
+            let dir_path = full_path.parent().expect("full_path has a parent");
+            create_dir_all(dir_path).await?;
+            fs::write(&full_path, content).await?;
 
-        let labels = tag::extract_tags(content);
-        if !labels.is_empty() {
-            tag::sync_tags(&tx, summary.id, &labels).await?;
-        }
+            let labels = tag::extract_tags(content);
+            if !labels.is_empty() {
+                tag::sync_tags(&tx, summary.id, &labels).await?;
+            }
 
-        tx.commit().await?;
-        db.checkpoint().await.ok();
-
-        Ok(summary)
+            tx.commit().await?;
+            Ok(summary)
+        })
     }
 
     pub fn full_path(&self, file_path: &str) -> PathBuf {
@@ -69,8 +69,9 @@ impl SummaryService {
     }
 
     pub async fn list_summaries(&self) -> Result<Vec<Summary>> {
-        let db = Database::open_path(&self.db_path).await?;
-        repositories::summary::list_summaries(db.conn()).await
+        with_conn!(&self.db_path, |conn| {
+            repositories::summary::list_summaries(conn).await
+        })
     }
 
     pub async fn get_title(&self, summary: &Summary) -> Result<String> {
@@ -82,22 +83,27 @@ impl SummaryService {
     }
 
     pub async fn get_content(&self, summary_id: Uuid) -> Result<String> {
-        let db = Database::open_path(&self.db_path).await?;
-        if let Some(summary) =
-            repositories::summary::find_one(db.conn(), &SummaryFilter::new().id(summary_id)).await?
-        {
-            let full_path = self.root_dir.join(summary.file_path.clone());
-            if let Ok(content) = fs::read_to_string(&full_path).await {
-                return Ok(content);
+        with_conn!(&self.db_path, |conn| {
+            async {
+                if let Some(summary) =
+                    repositories::summary::find_one(conn, &SummaryFilter::new().id(summary_id))
+                        .await?
+                {
+                    let full_path = self.root_dir.join(summary.file_path.clone());
+                    if let Ok(content) = fs::read_to_string(&full_path).await {
+                        return Ok(content);
+                    }
+                    return Err(anyhow::anyhow!(format!(
+                        "Unable to retrieve summary content: No content at {}.",
+                        summary.file_path
+                    )));
+                }
+                Err(anyhow::anyhow!(
+                    "Unable to retrieve summary content: Summary not found."
+                ))
             }
-            return Err(anyhow::anyhow!(format!(
-                "Unable to retrieve summary content: No content at {}.",
-                summary.file_path
-            )));
-        }
-        Err(anyhow::anyhow!(
-            "Unable to retrieve summary content: Summary not found."
-        ))
+            .await
+        })
     }
 
     pub async fn post_edit_summary(
@@ -105,16 +111,15 @@ impl SummaryService {
         summary_id: &Uuid,
         diff: Vec<DiffEntry>,
     ) -> Result<()> {
-        let mut db = Database::open_path(&self.db_path).await?;
-        let conn = db.conn_mut();
-        let tx = conn.transaction().await?;
-        repositories::summary::touch(&tx, summary_id).await?;
-        let metadata = serde_json::to_string(&diff)?;
-        repositories::event::insert(&tx, *summary_id, &EventType::SummaryUpdated, &metadata)
-            .await?;
-        tx.commit().await?;
-        db.checkpoint().await.ok();
-        Ok(())
+        with_conn_mut!(&self.db_path, |conn| {
+            let tx = conn.transaction().await?;
+            repositories::summary::touch(&tx, summary_id).await?;
+            let metadata = serde_json::to_string(&diff)?;
+            repositories::event::insert(&tx, *summary_id, &EventType::SummaryUpdated, &metadata)
+                .await?;
+            tx.commit().await?;
+            Ok(())
+        })
     }
 }
 
