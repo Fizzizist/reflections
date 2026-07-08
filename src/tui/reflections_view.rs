@@ -183,9 +183,7 @@ mod tests {
     async fn create_test_service() -> (ReflectionService, PathBuf, PathBuf) {
         let db_dir = tempdir().expect("tempdir failed");
         let db_path = db_dir.path().join("test.db");
-        let _db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let _db = Database::open_path(&db_path).await.expect("db open failed");
         let root_dir = tempdir().expect("tempdir failed");
         let root_path = root_dir.path().to_path_buf();
         let service = ReflectionService::new(db_path.clone(), root_path.clone());

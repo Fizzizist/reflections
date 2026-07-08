@@ -43,7 +43,7 @@ impl SummaryService {
         let relative_path = format!("{}/{}", date_dir, file_name);
         let full_path = self.full_path(&relative_path);
 
-        let mut db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let mut db = Database::open_path(&self.db_path).await?;
         let conn = db.conn_mut();
         let tx = conn.transaction().await?;
         let summary = repositories::summary::insert(&tx, id, &relative_path, start, end).await?;
@@ -59,7 +59,7 @@ impl SummaryService {
         }
 
         tx.commit().await?;
-        db.checkpoint().await?;
+        db.checkpoint().await.ok();
 
         Ok(summary)
     }
@@ -69,7 +69,7 @@ impl SummaryService {
     }
 
     pub async fn list_summaries(&self) -> Result<Vec<Summary>> {
-        let db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let db = Database::open_path(&self.db_path).await?;
         repositories::summary::list_summaries(db.conn()).await
     }
 
@@ -82,7 +82,7 @@ impl SummaryService {
     }
 
     pub async fn get_content(&self, summary_id: Uuid) -> Result<String> {
-        let db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let db = Database::open_path(&self.db_path).await?;
         if let Some(summary) =
             repositories::summary::find_one(db.conn(), &SummaryFilter::new().id(summary_id)).await?
         {
@@ -105,7 +105,7 @@ impl SummaryService {
         summary_id: &Uuid,
         diff: Vec<DiffEntry>,
     ) -> Result<()> {
-        let mut db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let mut db = Database::open_path(&self.db_path).await?;
         let conn = db.conn_mut();
         let tx = conn.transaction().await?;
         repositories::summary::touch(&tx, summary_id).await?;
@@ -113,7 +113,7 @@ impl SummaryService {
         repositories::event::insert(&tx, *summary_id, &EventType::SummaryUpdated, &metadata)
             .await?;
         tx.commit().await?;
-        db.checkpoint().await?;
+        db.checkpoint().await.ok();
         Ok(())
     }
 }
@@ -159,9 +159,7 @@ mod tests {
     ) {
         let db_dir = tempdir().expect("create tempdir failed");
         let db_path = db_dir.path().join("test.db");
-        let _db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let _db = Database::open_path(&db_path).await.expect("db open failed");
         let root_dir = tempdir().expect("create tempdir failed");
         let root_path = root_dir.path().to_path_buf();
         let service = SummaryService::new(db_path.clone(), root_path.clone());
@@ -179,9 +177,7 @@ mod tests {
             .await
             .expect("create failed");
 
-        let db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let db = Database::open_path(&db_path).await.expect("db open failed");
         let mut rows = db
             .conn()
             .query(
@@ -249,7 +245,7 @@ mod tests {
         let err = result.expect_err("expected error");
         assert!(err.to_string().contains("content cannot be empty"));
 
-        let db = Database::open(_db_path.to_str().expect("path is valid utf-8"))
+        let db = Database::open_path(&_db_path)
             .await
             .expect("db open failed");
         let mut rows = db
@@ -290,9 +286,7 @@ mod tests {
     async fn create_summary_rolls_back_on_file_write_failure() {
         let dir = tempdir().expect("create tempdir failed");
         let db_path = dir.path().join("test.db");
-        let _db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let _db = Database::open_path(&db_path).await.expect("db open failed");
 
         let root_dir = tempdir().expect("create tempdir failed");
         let root_path = root_dir.path().to_path_buf();
@@ -310,9 +304,7 @@ mod tests {
 
         assert!(result.is_err());
 
-        let db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let db = Database::open_path(&db_path).await.expect("db open failed");
         let mut rows = db
             .conn()
             .query("SELECT summary_id FROM summary", ())
@@ -340,9 +332,7 @@ mod tests {
             .await
             .expect("create failed");
 
-        let db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let db = Database::open_path(&db_path).await.expect("db open failed");
         let tags = repositories::tag::find_tags_for_entity(db.conn(), summary.id)
             .await
             .expect("find_tags_for_entity failed");

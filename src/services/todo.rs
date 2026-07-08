@@ -17,18 +17,18 @@ impl TodoService {
     }
 
     pub async fn create_todo_item(&mut self, label: &str) -> Result<TodoItem> {
-        let mut db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let mut db = Database::open_path(&self.db_path).await?;
         let conn = db.conn_mut();
         let tx = conn.transaction().await?;
         let todo_item = repositories::todo_item::insert(&tx, label).await?;
         repositories::event::insert(&tx, todo_item.id, &EventType::TodoItemCreated, "{}").await?;
         tx.commit().await?;
-        db.checkpoint().await?;
+        db.checkpoint().await.ok();
         Ok(todo_item)
     }
 
     pub async fn list_todo_items(&self) -> Result<Vec<TodoItem>> {
-        let db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let db = Database::open_path(&self.db_path).await?;
         repositories::todo_item::list_active(db.conn()).await
     }
 
@@ -37,7 +37,7 @@ impl TodoService {
         id: Uuid,
         new_status: TodoStatus,
     ) -> Result<TodoItem> {
-        let mut db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let mut db = Database::open_path(&self.db_path).await?;
         let conn = db.conn_mut();
         let tx = conn.transaction().await?;
         let old_item = repositories::todo_item::get_by_id(&tx, id).await?;
@@ -49,12 +49,12 @@ impl TodoService {
         .to_string();
         repositories::event::insert(&tx, id, &EventType::TodoItemStatusChanged, &metadata).await?;
         tx.commit().await?;
-        db.checkpoint().await?;
+        db.checkpoint().await.ok();
         Ok(updated_item)
     }
 
     pub async fn list_all_todo_items(&self) -> Result<Vec<TodoItem>> {
-        let db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let db = Database::open_path(&self.db_path).await?;
         repositories::todo_item::list_all(db.conn()).await
     }
 }
@@ -71,17 +71,13 @@ mod tests {
     async fn setup() -> (TodoService, PathBuf, tempfile::TempDir) {
         let dir = tempdir().expect("create tempdir failed");
         let db_path = dir.path().join("test.db");
-        let _db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let _db = Database::open_path(&db_path).await.expect("db open failed");
         let svc = TodoService::new(db_path.clone());
         (svc, db_path, dir)
     }
 
     async fn query_string(db_path: &PathBuf, sql: &str, params: impl turso::IntoParams) -> String {
-        let db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let db = Database::open_path(&db_path).await.expect("db open failed");
         let mut rows = db.conn().query(sql, params).await.expect("query failed");
         let row = rows
             .next()
@@ -135,9 +131,7 @@ mod tests {
             .expect("create failed");
 
         let now = Utc::now();
-        let mut db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let mut db = Database::open_path(&db_path).await.expect("db open failed");
         let tx = db.conn_mut().transaction().await.expect("tx begin failed");
         tx.execute(
             "INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at) VALUES (?, ?, 'DONE', ?, ?)",
@@ -169,9 +163,7 @@ mod tests {
             .expect("parse failed")
             .with_timezone(&Utc);
 
-        let mut db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let mut db = Database::open_path(&db_path).await.expect("db open failed");
         let tx = db.conn_mut().transaction().await.expect("tx begin failed");
         tx.execute(
             "INSERT INTO todo_item (todo_item_id, label, status, created_at, updated_at) VALUES (?, 'later_item', 'NEW', ?, ?)",
@@ -274,9 +266,7 @@ mod tests {
             .await
             .expect("update failed");
 
-        let db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let db = Database::open_path(&db_path).await.expect("db open failed");
         let mut rows = db
             .conn()
             .query(
@@ -351,7 +341,7 @@ impl TodoService {
         id: Uuid,
         timestamp: &str,
     ) -> Result<TodoItem> {
-        let mut db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let mut db = Database::open_path(&self.db_path).await?;
         let conn = db.conn_mut();
         let tx = conn.transaction().await?;
         tx.execute(
@@ -366,7 +356,7 @@ impl TodoService {
         .await?;
         tx.commit().await?;
         drop(db);
-        let db2 = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let db2 = Database::open_path(&self.db_path).await?;
         let item = repositories::todo_item::find_by_id(db2.conn(), id)
             .await?
             .expect("todo should exist after insert");

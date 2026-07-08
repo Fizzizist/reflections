@@ -32,27 +32,27 @@ impl ReflectionService {
         let relative_path = format!("{}/{}", date_dir, file_name);
         let full_path = self.full_path(&relative_path);
 
-        let mut db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let mut db = Database::open_path(&self.db_path).await?;
         let conn = db.conn_mut();
         let tx = conn.transaction().await?;
         let reflection =
             repositories::reflection::insert(&tx, id, about_id, &relative_path).await?;
         repositories::event::insert(&tx, reflection.id, &EventType::ReflectionCreated, "{}")
             .await?;
-        tx.commit().await?;
-        db.checkpoint().await?;
 
         let dir_path = full_path.parent().expect("full_path has a parent");
         create_dir_all(dir_path).await?;
         fs::write(&full_path, "").await?;
+
+        tx.commit().await?;
+        db.checkpoint().await.ok();
 
         Ok(reflection)
     }
 
     pub async fn cleanup_reflection(&mut self, id: Uuid) -> Result<()> {
         let reflection = {
-            let mut db =
-                Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+            let mut db = Database::open_path(&self.db_path).await?;
             let conn = db.conn_mut();
             let tx = conn.transaction().await?;
             let reflection = repositories::reflection::get_by_id(&tx, id).await?;
@@ -67,14 +67,13 @@ impl ReflectionService {
         };
 
         if is_empty_or_missing {
-            let mut db =
-                Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+            let mut db = Database::open_path(&self.db_path).await?;
             let conn = db.conn_mut();
             let tx = conn.transaction().await?;
             repositories::reflection::delete(&tx, id).await?;
             repositories::event::delete_by_entity_id(&tx, id).await?;
             tx.commit().await?;
-            db.checkpoint().await?;
+            db.checkpoint().await.ok();
 
             if let Err(e) = fs::remove_file(&full_path).await
                 && e.kind() != std::io::ErrorKind::NotFound
@@ -82,23 +81,22 @@ impl ReflectionService {
                 return Err(e.into());
             }
         } else {
-            let mut db =
-                Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+            let mut db = Database::open_path(&self.db_path).await?;
             let conn = db.conn_mut();
             tag::sync_tags_from_file(conn, id, &full_path).await?;
-            db.checkpoint().await?;
+            db.checkpoint().await.ok();
         }
 
         Ok(())
     }
 
     pub async fn list_reflections(&self) -> Result<Vec<Reflection>> {
-        let db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let db = Database::open_path(&self.db_path).await?;
         repositories::reflection::list_ordered_by_updated_at(db.conn()).await
     }
 
     pub async fn resolve_label(&self, reflection: &Reflection) -> Result<String> {
-        let db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let db = Database::open_path(&self.db_path).await?;
         let conn = db.conn();
         match reflection.about_id {
             None => Ok(format!(
@@ -163,9 +161,7 @@ mod tests {
     ) {
         let db_dir = tempdir().expect("create tempdir failed");
         let db_path = db_dir.path().join("test.db");
-        let _db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let _db = Database::open_path(&db_path).await.expect("db open failed");
         let root_dir = tempdir().expect("create tempdir failed");
         let root_path = root_dir.path().to_path_buf();
         let service = ReflectionService::new(db_path.clone(), root_path.clone());
@@ -173,9 +169,7 @@ mod tests {
     }
 
     async fn query_count(db_path: &PathBuf, sql: &str, params: impl turso::IntoParams) -> i64 {
-        let db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let db = Database::open_path(&db_path).await.expect("db open failed");
         let mut rows = db.conn().query(sql, params).await.expect("query failed");
         let row = rows
             .next()
@@ -295,9 +289,7 @@ mod tests {
         let content = fs::read_to_string(&full_path).await.expect("read failed");
         assert_eq!(content, "reflection content");
 
-        let db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let db = Database::open_path(&db_path).await.expect("db open failed");
         let tags = repositories::tag::find_tags_for_entity(db.conn(), reflection.id)
             .await
             .expect("find_tags_for_entity failed");
@@ -327,9 +319,7 @@ mod tests {
     async fn resolve_label_for_todo_reflection() {
         let (mut svc, db_path, _root_dir, _db_dir, _root_dir_temp) = setup().await;
 
-        let mut db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let mut db = Database::open_path(&db_path).await.expect("db open failed");
         let tx = db.conn_mut().transaction().await.expect("tx begin failed");
         let todo = repositories::todo_item::insert(&tx, "Test Todo")
             .await
@@ -354,9 +344,7 @@ mod tests {
     async fn resolve_label_for_meeting_reflection() {
         let (mut svc, db_path, _root_dir, _db_dir, _root_dir_temp) = setup().await;
 
-        let mut db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let mut db = Database::open_path(&db_path).await.expect("db open failed");
         let tx = db.conn_mut().transaction().await.expect("tx begin failed");
         let meeting = repositories::meeting::insert(&tx, "Test Meeting", Utc::now())
             .await
@@ -409,9 +397,7 @@ mod tests {
         assert_eq!(reflections.len(), 1);
         assert_eq!(reflections[0].id, reflection.id);
 
-        let db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let db = Database::open_path(&db_path).await.expect("db open failed");
         let entity_tags = repositories::tag::find_tags_for_entity(db.conn(), reflection.id)
             .await
             .expect("find_tags_for_entity failed");
@@ -439,5 +425,39 @@ mod tests {
 
         let entity_tag_count = query_count(&db_path, "SELECT COUNT(*) FROM entity_tag", ()).await;
         assert_eq!(entity_tag_count, 0);
+    }
+
+    #[tokio::test]
+    async fn create_reflection_rolls_back_on_file_write_failure() {
+        let db_dir = tempdir().expect("create tempdir failed");
+        let db_path = db_dir.path().join("test.db");
+        let _db = Database::open_path(&db_path).await.expect("db open failed");
+        let root_dir = tempdir().expect("create tempdir failed");
+        let root_path = root_dir.path().to_path_buf();
+
+        let fake_root = root_path.join("blocker");
+        fs::write(&fake_root, "not a directory")
+            .await
+            .expect("write failed");
+
+        let mut svc = ReflectionService::new(db_path.clone(), fake_root);
+
+        let result = svc.create_reflection(None).await;
+        assert!(result.is_err());
+
+        let db = Database::open_path(&db_path).await.expect("db open failed");
+        let mut rows = db
+            .conn()
+            .query("SELECT reflection_id FROM reflection", ())
+            .await
+            .expect("query failed");
+        assert!(rows.next().await.expect("fetch failed").is_none());
+
+        let mut rows = db
+            .conn()
+            .query("SELECT event_id FROM event", ())
+            .await
+            .expect("query failed");
+        assert!(rows.next().await.expect("fetch failed").is_none());
     }
 }

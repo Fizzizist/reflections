@@ -29,17 +29,19 @@ pub fn classify_db_error(e: TursoError) -> anyhow::Error {
     }
 }
 
-#[allow(dead_code)]
-pub fn is_lock_contention_error(e: &anyhow::Error) -> bool {
-    e.downcast_ref::<LockContentionError>().is_some()
-}
-
 pub struct Database {
     _db: TursoDatabase,
     conn: Connection,
 }
 
 impl Database {
+    pub async fn open_path(path: &std::path::Path) -> Result<Self> {
+        let path_str = path.to_str().ok_or_else(|| {
+            anyhow::anyhow!("database path contains invalid UTF-8: {}", path.display())
+        })?;
+        Self::open(path_str).await
+    }
+
     pub async fn open(path: &str) -> Result<Self> {
         let mut last_err: Option<TursoError> = None;
         for _ in 0..MAX_RETRIES {
@@ -78,7 +80,7 @@ impl Database {
         ))
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub async fn open_in_memory() -> Result<Self> {
         let db = Builder::new_local(":memory:")
             .experimental_custom_types(true)
@@ -99,20 +101,23 @@ impl Database {
 
     pub async fn checkpoint(&mut self) -> Result<()> {
         for _ in 0..MAX_RETRIES {
-            match self
-                .conn
-                .execute("PRAGMA wal_checkpoint(TRUNCATE)", ())
-                .await
-            {
-                Ok(_) => return Ok(()),
+            match self.conn.query("PRAGMA wal_checkpoint(TRUNCATE)", ()).await {
+                Ok(mut rows) => {
+                    while rows.next().await?.is_some() {
+                        // consume all rows from the checkpoint pragma
+                    }
+                    return Ok(());
+                }
                 Err(e) if is_lock_contention(&e) => {
                     tokio::time::sleep(RETRY_DELAY).await;
                     continue;
                 }
-                Err(_) => return Ok(()),
+                Err(e) => return Err(classify_db_error(e)),
             }
         }
-        Ok(())
+        Err(anyhow::anyhow!(
+            "checkpoint failed after {MAX_RETRIES} retries: lock contention persisted"
+        ))
     }
 }
 
@@ -157,9 +162,7 @@ mod tests {
     async fn checkpoint_succeeds_on_fresh_database() {
         let dir = tempdir().expect("tempdir failed");
         let db_path = dir.path().join("test.db");
-        let mut db = Database::open(db_path.to_str().expect("path valid"))
-            .await
-            .expect("open failed");
+        let mut db = Database::open_path(&db_path).await.expect("open failed");
         db.checkpoint().await.expect("checkpoint failed");
     }
 
@@ -167,9 +170,7 @@ mod tests {
     async fn open_file_db_wal_mode_enabled() {
         let dir = tempdir().expect("tempdir failed");
         let db_path = dir.path().join("test.db");
-        let db = Database::open(db_path.to_str().expect("path valid"))
-            .await
-            .expect("open failed");
+        let db = Database::open_path(&db_path).await.expect("open failed");
         let mut rows = db
             .conn()
             .query("PRAGMA journal_mode", ())
@@ -188,9 +189,7 @@ mod tests {
     async fn open_file_db_synchronous_normal() {
         let dir = tempdir().expect("tempdir failed");
         let db_path = dir.path().join("test.db");
-        let db = Database::open(db_path.to_str().expect("path valid"))
-            .await
-            .expect("open failed");
+        let db = Database::open_path(&db_path).await.expect("open failed");
         let mut rows = db
             .conn()
             .query("PRAGMA synchronous", ())
@@ -285,5 +284,134 @@ mod tests {
             let val: String = row.get(0).expect("get val");
             assert_eq!(val, "hello");
         }
+    }
+
+    #[tokio::test]
+    async fn concurrent_access_two_databases_open_simultaneously() {
+        let dir = tempdir().expect("tempdir failed");
+        let db_path = dir.path().join("test.db");
+        let db_path_str = db_path.to_str().expect("path valid").to_string();
+
+        let db1 = Database::open(&db_path_str)
+            .await
+            .expect("first open failed");
+        db1.conn()
+            .execute("CREATE TABLE test_concurrent (id INTEGER, val TEXT)", ())
+            .await
+            .expect("create table failed");
+
+        let mut db2 = Database::open(&db_path_str)
+            .await
+            .expect("second open failed");
+        db2.conn()
+            .execute("INSERT INTO test_concurrent VALUES (1, 'from_db2')", ())
+            .await
+            .expect("insert from db2 failed");
+        db2.checkpoint().await.expect("checkpoint db2 failed");
+        drop(db2);
+
+        let mut rows = db1
+            .conn()
+            .query("SELECT val FROM test_concurrent WHERE id = 1", ())
+            .await
+            .expect("query on db1 failed");
+        let row = rows
+            .next()
+            .await
+            .expect("fetch failed")
+            .expect("row exists");
+        let val: String = row.get(0).expect("get val");
+        assert_eq!(val, "from_db2");
+    }
+
+    #[tokio::test]
+    async fn concurrent_write_then_read_interleaved() {
+        let dir = tempdir().expect("tempdir failed");
+        let db_path = dir.path().join("test.db");
+        let db_path_str = db_path.to_str().expect("path valid").to_string();
+
+        let mut db_write = Database::open(&db_path_str)
+            .await
+            .expect("writer open failed");
+        db_write
+            .conn()
+            .execute("CREATE TABLE test_interleave (id INTEGER, val TEXT)", ())
+            .await
+            .expect("create table failed");
+        db_write
+            .conn()
+            .execute("INSERT INTO test_interleave VALUES (1, 'writer_data')", ())
+            .await
+            .expect("insert failed");
+        db_write.checkpoint().await.expect("checkpoint failed");
+        drop(db_write);
+
+        let db_read = Database::open(&db_path_str)
+            .await
+            .expect("reader open failed");
+        let mut rows = db_read
+            .conn()
+            .query("SELECT val FROM test_interleave WHERE id = 1", ())
+            .await
+            .expect("query failed");
+        let row = rows
+            .next()
+            .await
+            .expect("fetch failed")
+            .expect("row exists");
+        let val: String = row.get(0).expect("get val");
+        assert_eq!(val, "writer_data");
+    }
+
+    #[tokio::test]
+    async fn retry_loop_succeeds_after_lock_released() {
+        let dir = tempdir().expect("tempdir failed");
+        let db_path = dir.path().join("test.db");
+        let db_path_str = db_path.to_str().expect("path valid").to_string();
+
+        let db1 = Database::open(&db_path_str)
+            .await
+            .expect("first open failed");
+        db1.conn()
+            .execute("CREATE TABLE test_retry (id INTEGER)", ())
+            .await
+            .expect("create table failed");
+
+        let join = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            drop(db1);
+        });
+
+        let db2 = Database::open(&db_path_str)
+            .await
+            .expect("retry open should succeed");
+        let mut rows = db2
+            .conn()
+            .query("SELECT COUNT(*) FROM test_retry", ())
+            .await
+            .expect("query failed");
+        let row = rows
+            .next()
+            .await
+            .expect("fetch failed")
+            .expect("row exists");
+        let count: i64 = row.get(0).expect("get count");
+        assert_eq!(count, 0);
+
+        join.await.expect("join failed");
+    }
+
+    #[tokio::test]
+    async fn checkpoint_returns_error_on_nonexistent_table() {
+        let dir = tempdir().expect("tempdir failed");
+        let db_path = dir.path().join("test.db");
+        let mut db = Database::open_path(&db_path).await.expect("open failed");
+        db.conn()
+            .execute("CREATE TABLE test_cp (id INTEGER)", ())
+            .await
+            .expect("create failed");
+        db.checkpoint()
+            .await
+            .expect("checkpoint should succeed on valid db");
     }
 }

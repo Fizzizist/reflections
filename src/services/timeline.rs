@@ -78,12 +78,12 @@ impl TimelineService {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> Result<Vec<TimelineEntry>> {
-        let db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let db = Database::open_path(&self.db_path).await?;
         let conn = db.conn();
         let events = repositories::event::list_by_date_range(conn, start, end).await?;
         let mut entries = Vec::new();
         for event in events {
-            let entity = self.resolve_entity(conn, &event).await.unwrap_or(None);
+            let entity = self.resolve_entity(conn, &event).await?;
             entries.push(TimelineEntry {
                 event_id: event.event_id,
                 entity_id: event.entity_id,
@@ -98,7 +98,7 @@ impl TimelineService {
     }
 
     pub async fn get_entity_timeline(&self, entity_id: Uuid) -> Result<Vec<TimelineEntry>> {
-        let db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let db = Database::open_path(&self.db_path).await?;
         let conn = db.conn();
         let mut entity_ids = vec![entity_id];
         let linked_reflections =
@@ -124,7 +124,7 @@ impl TimelineService {
 
         let mut entries = Vec::new();
         for event in events {
-            let entity = self.resolve_entity(conn, &event).await.unwrap_or(None);
+            let entity = self.resolve_entity(conn, &event).await?;
             entries.push(TimelineEntry {
                 event_id: event.event_id,
                 entity_id: event.entity_id,
@@ -239,9 +239,7 @@ mod tests {
     ) {
         let db_dir = tempdir().expect("create tempdir failed");
         let db_path = db_dir.path().join("test.db");
-        let _db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let _db = Database::open_path(&db_path).await.expect("db open failed");
         let root_dir = tempdir().expect("create tempdir failed");
         let root_path = root_dir.path().to_path_buf();
         let service = TimelineService::new(db_path.clone(), root_path.clone());
@@ -424,9 +422,7 @@ mod tests {
         let (svc, db_path, _root_path, _db_dir, _root_dir) = setup().await;
 
         let fake_id = Uuid::now_v7();
-        let mut db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let mut db = Database::open_path(&db_path).await.expect("db open failed");
         let tx = db.conn_mut().transaction().await.expect("tx begin failed");
         tx.execute(
             "INSERT INTO event (event_id, entity_id, event_type, metadata, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -479,9 +475,7 @@ mod tests {
         let t2 = now - Duration::minutes(20);
         let t3 = now - Duration::minutes(10);
 
-        let mut db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let mut db = Database::open_path(&db_path).await.expect("db open failed");
         let tx = db.conn_mut().transaction().await.expect("tx begin failed");
 
         tx.execute(
@@ -542,9 +536,7 @@ mod tests {
         let start = now - Duration::hours(1);
         let end = now + Duration::hours(1);
 
-        let mut db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let mut db = Database::open_path(&db_path).await.expect("db open failed");
         let tx = db.conn_mut().transaction().await.expect("tx begin failed");
 
         tx.execute(
@@ -632,9 +624,7 @@ mod tests {
 
         let summary_id = Uuid::now_v7();
         let ts = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        let mut db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let mut db = Database::open_path(&db_path).await.expect("db open failed");
         let tx = db.conn_mut().transaction().await.expect("tx begin failed");
         tx.execute(
             "INSERT INTO summary (summary_id, file_path, start, \"end\", created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",

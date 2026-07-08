@@ -24,18 +24,18 @@ impl MeetingService {
         name: &str,
         scheduled_at: DateTime<Utc>,
     ) -> Result<Meeting> {
-        let mut db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let mut db = Database::open_path(&self.db_path).await?;
         let conn = db.conn_mut();
         let tx = conn.transaction().await?;
         let meeting = repositories::meeting::insert(&tx, name, scheduled_at).await?;
         repositories::event::insert(&tx, meeting.id, &EventType::MeetingCreated, "{}").await?;
         tx.commit().await?;
-        db.checkpoint().await?;
+        db.checkpoint().await.ok();
         Ok(meeting)
     }
 
     pub async fn list_meetings_for_today(&self) -> Result<Vec<Meeting>> {
-        let db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let db = Database::open_path(&self.db_path).await?;
         let now = Local::now();
         let local_midnight = now
             .date_naive()
@@ -60,7 +60,7 @@ impl MeetingService {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> Result<Vec<SyncResult>> {
-        let mut db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let mut db = Database::open_path(&self.db_path).await?;
         let conn = db.conn_mut();
         let tx = conn.transaction().await?;
         let calendar_events = backend.fetch_meetings(start, end).await?;
@@ -113,7 +113,7 @@ impl MeetingService {
         }
 
         tx.commit().await?;
-        db.checkpoint().await?;
+        db.checkpoint().await.ok();
         Ok(results)
     }
 }
@@ -171,17 +171,13 @@ mod tests {
     async fn setup() -> (MeetingService, PathBuf, TempDir) {
         let dir = tempdir().expect("create tempdir failed");
         let db_path = dir.path().join("test.db");
-        let _db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let _db = Database::open_path(&db_path).await.expect("db open failed");
         let svc = MeetingService::new(db_path.clone());
         (svc, db_path, dir)
     }
 
     async fn query_count(db_path: &PathBuf, sql: &str, params: impl turso::IntoParams) -> i64 {
-        let db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let db = Database::open_path(&db_path).await.expect("db open failed");
         let mut rows = db.conn().query(sql, params).await.expect("query failed");
         let row = rows
             .next()
@@ -192,9 +188,7 @@ mod tests {
     }
 
     async fn query_string(db_path: &PathBuf, sql: &str, params: impl turso::IntoParams) -> String {
-        let db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let db = Database::open_path(&db_path).await.expect("db open failed");
         let mut rows = db.conn().query(sql, params).await.expect("query failed");
         let row = rows
             .next()

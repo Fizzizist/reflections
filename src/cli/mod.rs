@@ -230,9 +230,7 @@ mod tests {
     async fn create_summary_from_args_full_flow() {
         let dir = tempdir().expect("create tempdir failed");
         let db_path = dir.path().join("test.db");
-        let _db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let _db = Database::open_path(&db_path).await.expect("db open failed");
         let root_dir = tempdir().expect("create tempdir failed");
         let root_path = root_dir.path().to_path_buf();
 
@@ -245,9 +243,7 @@ mod tests {
             .await
             .expect("create failed");
 
-        let db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let db = Database::open_path(&db_path).await.expect("db open failed");
         let mut rows = db
             .conn()
             .query(
@@ -280,9 +276,7 @@ mod tests {
     async fn create_summary_from_args_empty_content_returns_error() {
         let dir = tempdir().expect("create tempdir failed");
         let db_path = dir.path().join("test.db");
-        let _db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let _db = Database::open_path(&db_path).await.expect("db open failed");
         let root_dir = tempdir().expect("create tempdir failed");
         let root_path = root_dir.path().to_path_buf();
 
@@ -296,9 +290,7 @@ mod tests {
         let err = result.expect_err("expected error");
         assert!(err.to_string().contains("stdin content cannot be empty"));
 
-        let db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let db = Database::open_path(&db_path).await.expect("db open failed");
         let mut rows = db
             .conn()
             .query("SELECT summary_id FROM summary", ())
@@ -311,9 +303,7 @@ mod tests {
     async fn create_summary_from_args_json_output_is_valid() {
         let dir = tempdir().expect("create tempdir failed");
         let db_path = dir.path().join("test.db");
-        let _db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let _db = Database::open_path(&db_path).await.expect("db open failed");
         let root_dir = tempdir().expect("create tempdir failed");
         let root_path = root_dir.path().to_path_buf();
 

@@ -340,7 +340,7 @@ mod tests {
         ensure_utc_tz();
         let db_dir = tempfile::tempdir().expect("create tempdir failed").keep();
         let db_path = db_dir.join("test.db");
-        let _db = crate::db::Database::open(db_path.to_str().expect("path is valid utf-8"))
+        let _db = crate::db::Database::open_path(&db_path)
             .await
             .expect("db open failed");
         let root_dir = tempfile::tempdir().expect("create tempdir failed").keep();

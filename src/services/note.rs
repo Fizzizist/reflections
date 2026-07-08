@@ -31,23 +31,24 @@ impl NoteService {
         let relative_path = format!("{}/{}", date_dir, file_name);
         let full_path = self.full_path(&relative_path);
 
-        let mut db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let mut db = Database::open_path(&self.db_path).await?;
         let conn = db.conn_mut();
         let tx = conn.transaction().await?;
         let note = repositories::note::insert(&tx, id, related_to_id, &relative_path).await?;
         repositories::event::insert(&tx, note.id, &EventType::NoteCreated, "{}").await?;
-        tx.commit().await?;
-        db.checkpoint().await?;
 
         let dir_path = full_path.parent().expect("full_path has a parent");
         create_dir_all(dir_path).await?;
         fs::write(&full_path, "").await?;
 
+        tx.commit().await?;
+        db.checkpoint().await.ok();
+
         Ok(note)
     }
 
     pub async fn cleanup_note(&mut self, id: Uuid) -> Result<()> {
-        let mut db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8")).await?;
+        let mut db = Database::open_path(&self.db_path).await?;
         let conn = db.conn_mut();
         let tx = conn.transaction().await?;
         let note = repositories::note::get_by_id(&tx, id).await?;
@@ -71,10 +72,10 @@ impl NoteService {
             {
                 return Err(e.into());
             }
-            db.checkpoint().await?;
+            db.checkpoint().await.ok();
         } else {
             tag::sync_tags_from_file(db.conn_mut(), id, &full_path).await?;
-            db.checkpoint().await?;
+            db.checkpoint().await.ok();
         }
 
         Ok(())
@@ -86,7 +87,7 @@ impl NoteService {
 
     #[cfg(test)]
     pub async fn note_count(&self) -> i64 {
-        let db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8"))
+        let db = Database::open_path(&self.db_path)
             .await
             .expect("db open failed");
         let mut rows = db
@@ -101,7 +102,7 @@ impl NoteService {
 
     #[cfg(test)]
     pub async fn list_notes_for_test(&self) -> Vec<Note> {
-        let db = Database::open(self.db_path.to_str().expect("db_path is valid utf-8"))
+        let db = Database::open_path(&self.db_path)
             .await
             .expect("db open failed");
         let mut rows = db
@@ -171,9 +172,7 @@ mod tests {
     ) {
         let db_dir = tempdir().expect("create tempdir failed");
         let db_path = db_dir.path().join("test.db");
-        let _db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let _db = Database::open_path(&db_path).await.expect("db open failed");
         let root_dir = tempdir().expect("create root_dir tempdir failed");
         let root_path = root_dir.path().to_path_buf();
         let service = NoteService::new(db_path.clone(), root_path.clone());
@@ -181,9 +180,7 @@ mod tests {
     }
 
     async fn query_count(db_path: &PathBuf, sql: &str, params: impl turso::IntoParams) -> i64 {
-        let db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let db = Database::open_path(&db_path).await.expect("db open failed");
         let mut rows = db.conn().query(sql, params).await.expect("query failed");
         let row = rows
             .next()
@@ -304,9 +301,7 @@ mod tests {
         let content = fs::read_to_string(&full_path).await.expect("read failed");
         assert_eq!(content, "note content");
 
-        let db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let db = Database::open_path(&db_path).await.expect("db open failed");
         let tags = repositories::tag::find_tags_for_entity(db.conn(), note.id)
             .await
             .expect("find_tags_for_entity failed");
@@ -358,9 +353,7 @@ mod tests {
 
         assert_eq!(svc.note_count().await, 1);
 
-        let db = Database::open(db_path.to_str().expect("path is valid utf-8"))
-            .await
-            .expect("db open failed");
+        let db = Database::open_path(&db_path).await.expect("db open failed");
         let tags = repositories::tag::find_tags_for_entity(db.conn(), note.id)
             .await
             .expect("find_tags_for_entity failed");
@@ -386,5 +379,39 @@ mod tests {
 
         let entity_tag_count = query_count(&db_path, "SELECT COUNT(*) FROM entity_tag", ()).await;
         assert_eq!(entity_tag_count, 0);
+    }
+
+    #[tokio::test]
+    async fn create_note_rolls_back_on_file_write_failure() {
+        let db_dir = tempdir().expect("create tempdir failed");
+        let db_path = db_dir.path().join("test.db");
+        let _db = Database::open_path(&db_path).await.expect("db open failed");
+        let root_dir = tempdir().expect("create tempdir failed");
+        let root_path = root_dir.path().to_path_buf();
+
+        let fake_root = root_path.join("blocker");
+        fs::write(&fake_root, "not a directory")
+            .await
+            .expect("write failed");
+
+        let mut svc = NoteService::new(db_path.clone(), fake_root);
+
+        let result = svc.create_note(None).await;
+        assert!(result.is_err());
+
+        let db = Database::open_path(&db_path).await.expect("db open failed");
+        let mut rows = db
+            .conn()
+            .query("SELECT note_id FROM note", ())
+            .await
+            .expect("query failed");
+        assert!(rows.next().await.expect("fetch failed").is_none());
+
+        let mut rows = db
+            .conn()
+            .query("SELECT event_id FROM event", ())
+            .await
+            .expect("query failed");
+        assert!(rows.next().await.expect("fetch failed").is_none());
     }
 }
