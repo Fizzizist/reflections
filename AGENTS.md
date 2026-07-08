@@ -57,6 +57,11 @@ executes `PRAGMA wal_checkpoint(TRUNCATE)` to consolidate WAL pages into the mai
 `LockContentionError` type and `classify_db_error` function map Turso `Busy` and lock-related errors
 to a sentinel that retry logic can detect. Services use open/close-per-action: each method opens a
 `Database`, operates, optionally checkpoints, and drops it — releasing the WAL lock.
+Three declarative macros in `db/mod.rs` eliminate the open/checkpoint boilerplate:
+`with_conn!(path, |conn| body)` (read-only, no transaction, no checkpoint),
+`with_conn_mut!(path, |conn| body)` (write, `&mut Connection`, auto-checkpoint), and
+`with_txn!(path, |tx| body)` (write, auto-begins transaction, auto-commits on `Ok`,
+auto-rolls-back on `Err`, auto-checkpoints — the common case for single-transaction methods).
 
 ### Models
 
