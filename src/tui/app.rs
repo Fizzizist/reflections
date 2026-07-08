@@ -715,6 +715,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn meeting_modal_small_terminal_clamps_height_and_keeps_datetime_visible() {
+        let mut app = test_app().await;
+        app.active_tab = Tab::Meetings;
+        app.meetings_view.set_items(vec![fixed_meeting("Standup")]);
+        app.meetings_view.open_modal();
+        app.meetings_view.set_datetime_for_test(2024, 1, 15, 10, 30);
+
+        for c in std::iter::repeat_n('a', 200) {
+            app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+                .await
+                .expect("handle_key failed");
+        }
+
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).expect("terminal creation");
+        terminal
+            .draw(|frame| render_app(&mut app, frame))
+            .expect("failed to draw");
+        insta::assert_snapshot!("meeting modal small terminal", terminal.backend());
+    }
+
+    #[tokio::test]
     async fn a_opens_meeting_modal() {
         let mut app = test_app().await;
         app.active_tab = Tab::Meetings;

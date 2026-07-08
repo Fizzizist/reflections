@@ -388,12 +388,8 @@ impl MeetingModal {
             ])
         };
 
-        let datetime_area = Rect::new(
-            inner.x + 1,
-            inner.y + 2 + name_lines,
-            inner.width.saturating_sub(2),
-            1,
-        );
+        let datetime_y = (inner.y + 2 + name_lines).min(inner.y + inner.height.saturating_sub(1));
+        let datetime_area = Rect::new(inner.x + 1, datetime_y, inner.width.saturating_sub(2), 1);
         frame.render_widget(
             ratatui::widgets::Paragraph::new(datetime_line),
             datetime_area,
