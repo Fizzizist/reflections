@@ -1,21 +1,23 @@
 use anyhow::Result;
 use chrono::{DateTime, Local, LocalResult, TimeZone, Utc};
 use serde::Serialize;
-use turso::Connection;
+use std::path::PathBuf;
 
 use crate::calendar::backend::CalendarBackend;
 use crate::models::event::EventType;
 use crate::models::meeting::Meeting;
 use crate::repositories;
 use crate::repositories::meeting::MeetingFilter;
+use crate::with_conn;
+use crate::with_txn;
 
 pub struct MeetingService {
-    conn: Connection,
+    db_path: PathBuf,
 }
 
 impl MeetingService {
-    pub fn new(conn: Connection) -> Self {
-        Self { conn }
+    pub fn new(db_path: PathBuf) -> Self {
+        Self { db_path }
     }
 
     pub async fn create_meeting(
@@ -23,11 +25,11 @@ impl MeetingService {
         name: &str,
         scheduled_at: DateTime<Utc>,
     ) -> Result<Meeting> {
-        let tx = self.conn.transaction().await?;
-        let meeting = repositories::meeting::insert(&tx, name, scheduled_at).await?;
-        repositories::event::insert(&tx, meeting.id, &EventType::MeetingCreated, "{}").await?;
-        tx.commit().await?;
-        Ok(meeting)
+        with_txn!(&self.db_path, |tx| {
+            let meeting = repositories::meeting::insert(&tx, name, scheduled_at).await?;
+            repositories::event::insert(&tx, meeting.id, &EventType::MeetingCreated, "{}").await?;
+            Ok(meeting)
+        })
     }
 
     pub async fn list_meetings_for_today(&self) -> Result<Vec<Meeting>> {
@@ -46,7 +48,9 @@ impl MeetingService {
         };
         let end = start + chrono::Duration::days(1);
         let filter = MeetingFilter::new().start(start).end(end);
-        repositories::meeting::find(&self.conn, &filter).await
+        with_conn!(&self.db_path, |conn| {
+            repositories::meeting::find(conn, &filter).await
+        })
     }
 
     pub async fn sync_meetings(
@@ -55,58 +59,59 @@ impl MeetingService {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> Result<Vec<SyncResult>> {
-        let tx = self.conn.transaction().await?;
-        let calendar_events = backend.fetch_meetings(start, end).await?;
+        with_txn!(&self.db_path, |tx| {
+            let calendar_events = backend.fetch_meetings(start, end).await?;
 
-        let names: Vec<String> = calendar_events.iter().map(|e| e.name.clone()).collect();
-        let existing_meetings =
-            repositories::meeting::find_by_names_in_range(&tx, &names, start, end).await?;
-        let existing_map: std::collections::HashMap<&str, &Meeting> = existing_meetings
-            .iter()
-            .map(|m| (m.name.as_str(), m))
-            .collect();
+            let names: Vec<String> = calendar_events.iter().map(|e| e.name.clone()).collect();
+            let existing_meetings =
+                repositories::meeting::find_by_names_in_range(&tx, &names, start, end).await?;
+            let existing_map: std::collections::HashMap<&str, &Meeting> = existing_meetings
+                .iter()
+                .map(|m| (m.name.as_str(), m))
+                .collect();
 
-        let mut results = Vec::new();
+            let mut results = Vec::new();
 
-        for event in calendar_events {
-            match existing_map.get(event.name.as_str()) {
-                Some(meeting) if meeting.scheduled_at == event.scheduled_at => {
-                    continue;
-                }
-                Some(meeting) => {
-                    let updated_meeting = Meeting {
-                        id: meeting.id,
-                        name: meeting.name.clone(),
-                        scheduled_at: event.scheduled_at,
-                        created_at: meeting.created_at,
-                        updated_at: meeting.updated_at,
-                    };
-                    let updated = repositories::meeting::update(&tx, &updated_meeting).await?;
-                    results.push(SyncResult {
-                        action: SyncAction::Updated,
-                        meeting: updated,
-                    });
-                }
-                None => {
-                    let new_meeting =
-                        repositories::meeting::insert(&tx, &event.name, event.scheduled_at).await?;
-                    repositories::event::insert(
-                        &tx,
-                        new_meeting.id,
-                        &EventType::MeetingCreated,
-                        "{}",
-                    )
-                    .await?;
-                    results.push(SyncResult {
-                        action: SyncAction::Created,
-                        meeting: new_meeting,
-                    });
+            for event in calendar_events {
+                match existing_map.get(event.name.as_str()) {
+                    Some(meeting) if meeting.scheduled_at == event.scheduled_at => {
+                        continue;
+                    }
+                    Some(meeting) => {
+                        let updated_meeting = Meeting {
+                            id: meeting.id,
+                            name: meeting.name.clone(),
+                            scheduled_at: event.scheduled_at,
+                            created_at: meeting.created_at,
+                            updated_at: meeting.updated_at,
+                        };
+                        let updated = repositories::meeting::update(&tx, &updated_meeting).await?;
+                        results.push(SyncResult {
+                            action: SyncAction::Updated,
+                            meeting: updated,
+                        });
+                    }
+                    None => {
+                        let new_meeting =
+                            repositories::meeting::insert(&tx, &event.name, event.scheduled_at)
+                                .await?;
+                        repositories::event::insert(
+                            &tx,
+                            new_meeting.id,
+                            &EventType::MeetingCreated,
+                            "{}",
+                        )
+                        .await?;
+                        results.push(SyncResult {
+                            action: SyncAction::Created,
+                            meeting: new_meeting,
+                        });
+                    }
                 }
             }
-        }
 
-        tx.commit().await?;
-        Ok(results)
+            Ok(results)
+        })
     }
 }
 
@@ -126,11 +131,11 @@ pub struct SyncResult {
 mod tests {
     use super::*;
     use crate::calendar::types::CalendarEvent;
-    use crate::schema;
+    use crate::db::Database;
     use async_trait::async_trait;
     use chrono::Duration;
     use chrono::Timelike;
-    use turso::Builder;
+    use tempfile::{TempDir, tempdir};
 
     struct MockCalendarBackend {
         events: Vec<CalendarEvent>,
@@ -160,22 +165,39 @@ mod tests {
         }
     }
 
-    async fn setup() -> MeetingService {
-        let db = Builder::new_local(":memory:")
-            .experimental_custom_types(true)
-            .build()
+    async fn setup() -> (MeetingService, PathBuf, TempDir) {
+        let dir = tempdir().expect("create tempdir failed");
+        let db_path = dir.path().join("test.db");
+        let _db = Database::open_path(&db_path).await.expect("db open failed");
+        let svc = MeetingService::new(db_path.clone());
+        (svc, db_path, dir)
+    }
+
+    async fn query_count(db_path: &PathBuf, sql: &str, params: impl turso::IntoParams) -> i64 {
+        let db = Database::open_path(&db_path).await.expect("db open failed");
+        let mut rows = db.conn().query(sql, params).await.expect("query failed");
+        let row = rows
+            .next()
             .await
-            .expect("db build failed");
-        let conn = db.connect().expect("db connect failed");
-        schema::init_schema(&conn)
+            .expect("fetch failed")
+            .expect("row exists");
+        row.get(0).expect("get count")
+    }
+
+    async fn query_string(db_path: &PathBuf, sql: &str, params: impl turso::IntoParams) -> String {
+        let db = Database::open_path(&db_path).await.expect("db open failed");
+        let mut rows = db.conn().query(sql, params).await.expect("query failed");
+        let row = rows
+            .next()
             .await
-            .expect("schema init failed");
-        MeetingService::new(conn)
+            .expect("fetch failed")
+            .expect("row exists");
+        row.get::<String>(0).expect("get string")
     }
 
     #[tokio::test]
     async fn sync_meetings_creates_new_meetings() {
-        let mut service = setup().await;
+        let (mut service, _db_path, _dir) = setup().await;
         let now = Utc::now();
         let start = now - Duration::hours(1);
         let end = now + Duration::hours(1);
@@ -207,7 +229,7 @@ mod tests {
 
     #[tokio::test]
     async fn sync_meetings_updates_existing_meeting() {
-        let mut service = setup().await;
+        let (mut service, _db_path, _dir) = setup().await;
         let now = Utc::now().with_nanosecond(0).expect("valid");
         let start = now - Duration::hours(1);
         let end = now + Duration::hours(1);
@@ -239,7 +261,7 @@ mod tests {
 
     #[tokio::test]
     async fn sync_meetings_idempotent_when_time_matches() {
-        let mut service = setup().await;
+        let (mut service, _db_path, _dir) = setup().await;
         let now = Utc::now().with_nanosecond(0).expect("valid");
         let start = now - Duration::hours(1);
         let end = now + Duration::hours(1);
@@ -267,7 +289,7 @@ mod tests {
 
     #[tokio::test]
     async fn sync_meetings_creates_meeting_created_events_only_for_new() {
-        let mut service = setup().await;
+        let (mut service, db_path, _dir) = setup().await;
         let now = Utc::now().with_nanosecond(0).expect("valid");
         let start = now - Duration::hours(1);
         let end = now + Duration::hours(1);
@@ -299,33 +321,26 @@ mod tests {
         assert!(matches!(results[0].action, SyncAction::Updated));
         assert!(matches!(results[1].action, SyncAction::Created));
 
-        let conn = &service.conn;
-        let mut rows = conn
-            .query(
-                "SELECT COUNT(*) FROM event WHERE entity_id = ?",
-                [original.id.to_string()],
-            )
-            .await
-            .expect("query failed");
-        let row = rows.next().await.expect("next failed").expect("row exists");
-        let count: i64 = row.get(0).expect("get count");
+        let count = query_count(
+            &db_path,
+            "SELECT COUNT(*) FROM event WHERE entity_id = ?",
+            [original.id.to_string()],
+        )
+        .await;
         assert_eq!(count, 1);
 
-        let mut rows = conn
-            .query(
-                "SELECT event_type FROM event WHERE entity_id = ?",
-                [results[1].meeting.id.to_string()],
-            )
-            .await
-            .expect("query failed");
-        let row = rows.next().await.expect("next failed").expect("row exists");
-        let event_type: String = row.get(0).expect("get event_type");
+        let event_type = query_string(
+            &db_path,
+            "SELECT event_type FROM event WHERE entity_id = ?",
+            [results[1].meeting.id.to_string()],
+        )
+        .await;
         assert_eq!(event_type, "MEETING_CREATED");
     }
 
     #[tokio::test]
     async fn sync_meetings_empty_backend_returns_empty_vec() {
-        let mut service = setup().await;
+        let (mut service, _db_path, _dir) = setup().await;
         let now = Utc::now();
         let start = now - Duration::hours(1);
         let end = now + Duration::hours(1);
@@ -342,7 +357,7 @@ mod tests {
 
     #[tokio::test]
     async fn sync_meetings_correct_sync_result_actions() {
-        let mut service = setup().await;
+        let (mut service, _db_path, _dir) = setup().await;
         let now = Utc::now();
         let start = now - Duration::hours(1);
         let end = now + Duration::hours(1);
@@ -377,7 +392,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_meeting_inserts_row() {
-        let mut service = setup().await;
+        let (mut service, _db_path, _dir) = setup().await;
         let scheduled_at = Utc::now();
 
         let meeting = service
@@ -390,7 +405,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_meeting_created_event() {
-        let mut service = setup().await;
+        let (mut service, db_path, _dir) = setup().await;
         let scheduled_at = Utc::now();
 
         let meeting = service
@@ -398,27 +413,18 @@ mod tests {
             .await
             .expect("create failed");
 
-        let conn = &service.conn;
-        let mut stmt = conn
-            .prepare("SELECT entity_id, event_type FROM event WHERE entity_id = ?")
-            .await
-            .expect("prepare failed");
-        let mut rows = stmt
-            .query([meeting.id.to_string()])
-            .await
-            .expect("query failed");
-
-        let row = rows.next().await.expect("next failed").expect("row exists");
-        let entity_id: String = row.get(0).expect("get entity_id");
-        let event_type: String = row.get(1).expect("get event_type");
-
-        assert_eq!(entity_id, meeting.id.to_string());
+        let event_type = query_string(
+            &db_path,
+            "SELECT event_type FROM event WHERE entity_id = ?",
+            [meeting.id.to_string()],
+        )
+        .await;
         assert_eq!(event_type, "MEETING_CREATED");
     }
 
     #[tokio::test]
     async fn create_meeting_is_atomic() {
-        let mut service = setup().await;
+        let (mut service, db_path, _dir) = setup().await;
         let scheduled_at = Utc::now();
 
         let meeting = service
@@ -426,32 +432,26 @@ mod tests {
             .await
             .expect("create failed");
 
-        let conn = &service.conn;
+        let meeting_exists = query_count(
+            &db_path,
+            "SELECT COUNT(*) FROM meeting WHERE meeting_id = ?",
+            [meeting.id.to_string()],
+        )
+        .await;
+        assert_eq!(meeting_exists, 1);
 
-        let mut stmt = conn
-            .prepare("SELECT meeting_id FROM meeting WHERE meeting_id = ?")
-            .await
-            .expect("prepare meeting failed");
-        let mut rows = stmt
-            .query([meeting.id.to_string()])
-            .await
-            .expect("query meeting failed");
-        assert!(rows.next().await.expect("next failed").is_some());
-
-        let mut stmt = conn
-            .prepare("SELECT event_id FROM event WHERE entity_id = ?")
-            .await
-            .expect("prepare event failed");
-        let mut rows = stmt
-            .query([meeting.id.to_string()])
-            .await
-            .expect("query event failed");
-        assert!(rows.next().await.expect("next failed").is_some());
+        let event_exists = query_count(
+            &db_path,
+            "SELECT COUNT(*) FROM event WHERE entity_id = ?",
+            [meeting.id.to_string()],
+        )
+        .await;
+        assert_eq!(event_exists, 1);
     }
 
     #[tokio::test]
     async fn list_meetings_for_today() {
-        let mut service = setup().await;
+        let (mut service, _db_path, _dir) = setup().await;
         let now = Local::now();
         let local_midnight = now
             .date_naive()
@@ -488,7 +488,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_meeting_with_special_chars() {
-        let mut service = setup().await;
+        let (mut service, _db_path, _dir) = setup().await;
         let scheduled_at = Utc::now();
         let special_name = "Meeting with \"quotes\" & <special> chars";
 
@@ -502,7 +502,7 @@ mod tests {
 
     #[tokio::test]
     async fn sync_meetings_rolls_back_on_backend_failure() {
-        let mut service = setup().await;
+        let (mut service, db_path, _dir) = setup().await;
         let backend = FailingCalendarBackend;
         let start = Utc::now();
         let end = start + Duration::days(1);
@@ -510,21 +510,7 @@ mod tests {
         let result = service.sync_meetings(&backend, start, end).await;
         assert!(result.is_err());
 
-        let conn = &service.conn;
-        let mut rows = conn
-            .query("SELECT COUNT(*) FROM meeting", ())
-            .await
-            .expect("query failed");
-        let row = rows
-            .next()
-            .await
-            .expect("fetch failed")
-            .expect("row exists");
-        let count = *row
-            .get_value(0)
-            .expect("value failed")
-            .as_integer()
-            .expect("expected int");
+        let count = query_count(&db_path, "SELECT COUNT(*) FROM meeting", ()).await;
         assert_eq!(count, 0);
     }
 }

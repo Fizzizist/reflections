@@ -45,7 +45,23 @@ The Reflections application is opinionated about keeping layers and abstractions
 frontend and a CLI frontend, both of which should only interact with the outer service layer. The services contain the application logic and keep state via the
 repositories. Repositories are the abstraction layer around the database. The database is an
 embedded Turso (libSQL) instance stored locally at `reflections.db`. Schema definitions live in
-the `schema` module and are applied at startup.
+the `schema` module and are applied at startup by `db::Database::open`.
+
+### DB
+
+The `db` module provides the `Database` struct — the central abstraction for opening and managing
+Turso connections. `Database::open` configures WAL mode, `synchronous = NORMAL`, multiprocess WAL
+(`experimental_multiprocess_wal(true)`), initializes the schema, and includes a retry loop for lock
+contention (200 attempts × 25ms). `Database::open_in_memory` is provided for tests. `Database::checkpoint`
+executes `PRAGMA wal_checkpoint(TRUNCATE)` to consolidate WAL pages into the main `.db` file. The
+`LockContentionError` type and `classify_db_error` function map Turso `Busy` and lock-related errors
+to a sentinel that retry logic can detect. Services use open/close-per-action: each method opens a
+`Database`, operates, optionally checkpoints, and drops it — releasing the WAL lock.
+Three declarative macros in `db/mod.rs` eliminate the open/checkpoint boilerplate:
+`with_conn!(path, |conn| body)` (read-only, no transaction, no checkpoint),
+`with_conn_mut!(path, |conn| body)` (write, `&mut Connection`, auto-checkpoint), and
+`with_txn!(path, |tx| body)` (write, auto-begins transaction, auto-commits on `Ok`,
+auto-rolls-back on `Err`, auto-checkpoints — the common case for single-transaction methods).
 
 ### Models
 
@@ -58,8 +74,8 @@ the database tables. Models that participate in the editor workflow implement `E
 ### TUI
 
 Inside the `tui` module is all of the ratatui widgets for display. The root struct is App, which
-takes a single Turso connection and a root directory path. It clones the connection internally to
-construct all services. No application logic lives inside the tui, it is just built to display. Any
+takes a `db_path: PathBuf` and a `root_dir: PathBuf`. It constructs all services with `db_path`
+clones. No application logic lives inside the tui, it is just built to display. Any
 action performed by a user in the TUI is routed to a service to actually enact it. The `tui` module
 includes reusable sub-components such as `InputBox` (text input with cursor, character filtering,
 and max length), modal widgets (`InputModal`, `MeetingModal`, `StatusModal`), the `editor` module
@@ -95,7 +111,10 @@ the TUI launches.
 
 ### Service
 
-Services hold a clone of the database connection and perform operations across repositories.
+Services hold a `db_path: PathBuf` and perform operations across repositories.
+Each service method opens a fresh `Database` (via `db::Database::open`), operates, checkpoints
+after writes (TRUNCATE mode), and drops the connection — releasing the WAL lock between
+operations. This allows concurrent processes to interleave access to the same database.
 If database operations are involved, the service function should open a transaction and perform.
 All of the repository-related steps before committing it. All application logic should live in the
 service layer. Services that participate in the editor workflow implement `EditableEntity` (defined
@@ -124,8 +143,9 @@ builder-pattern filters; existing specialized functions delegate to these for AP
 ### Schema
 
 The `schema` module contains all DDL statements (`CREATE TABLE IF NOT EXISTS ...`) and exposes
-an `init_schema` function that is called at startup to ensure the database schema exists. All table
-definitions are centralized here; repositories should not create or alter tables.
+an `init_schema` function that is called by `db::Database::open` (and `open_in_memory`) to ensure
+the database schema exists. All table definitions are centralized here; repositories should not
+create or alter tables.
 
 ### Calendar
 

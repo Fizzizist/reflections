@@ -1,5 +1,6 @@
 mod calendar;
 mod cli;
+mod db;
 mod models;
 mod repositories;
 mod schema;
@@ -9,8 +10,8 @@ mod tui;
 use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Command};
+use std::path::PathBuf;
 use tui::run as tui_run;
-use turso::Builder;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -25,14 +26,9 @@ async fn main() -> Result<()> {
             cli::MeetingCommand::Sync(sync_args) => cli::run_meeting_sync(sync_args).await,
         },
         None => {
-            let db = Builder::new_local("reflections.db")
-                .experimental_custom_types(true)
-                .build()
-                .await?;
-            let conn = db.connect()?;
-            schema::init_schema(&conn).await?;
+            let db_path = PathBuf::from(crate::db::DEFAULT_DB_PATH);
             let root_dir = std::env::current_dir()?;
-            tui_run(conn, root_dir).await
+            tui_run(db_path, root_dir).await
         }
     }
 }

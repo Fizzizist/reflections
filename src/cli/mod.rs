@@ -1,11 +1,10 @@
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use std::io::{self, Read};
-use turso::Builder;
+use std::path::PathBuf;
 
 use crate::calendar::google::GoogleCalendarBackend;
 use crate::cli::date::resolve_time_range_from_args;
-use crate::schema;
 use crate::services::meeting::MeetingService;
 use crate::services::summary::SummaryService;
 use crate::services::timeline::TimelineService;
@@ -69,8 +68,8 @@ pub struct SyncArgs {
 }
 
 async fn create_summary_from_args(
-    conn: turso::Connection,
-    root_dir: std::path::PathBuf,
+    db_path: PathBuf,
+    root_dir: PathBuf,
     content: &str,
     args: &SummaryCreateArgs,
 ) -> Result<crate::models::summary::Summary> {
@@ -78,18 +77,12 @@ async fn create_summary_from_args(
         anyhow::bail!("stdin content cannot be empty");
     }
     let (start, end) = date::parse_date_range(&args.start, &args.end)?;
-    let mut service = SummaryService::new(conn, root_dir);
+    let mut service = SummaryService::new(db_path, root_dir);
     service.create_summary(start, end, content).await
 }
 
 pub async fn run_summary_create(args: SummaryCreateArgs) -> Result<()> {
-    let db = Builder::new_local("reflections.db")
-        .experimental_custom_types(true)
-        .build()
-        .await
-        .context("failed to build database")?;
-    let conn = db.connect().context("failed to connect to database")?;
-    schema::init_schema(&conn).await?;
+    let db_path = PathBuf::from(crate::db::DEFAULT_DB_PATH);
     let root_dir = std::env::current_dir().context("failed to get current directory")?;
 
     let mut content = String::new();
@@ -97,22 +90,16 @@ pub async fn run_summary_create(args: SummaryCreateArgs) -> Result<()> {
         .read_to_string(&mut content)
         .context("failed to read stdin")?;
 
-    let summary = create_summary_from_args(conn, root_dir, &content, &args).await?;
+    let summary = create_summary_from_args(db_path, root_dir, &content, &args).await?;
 
     serde_json::to_writer_pretty(io::stdout(), &summary).context("failed to write JSON output")?;
     Ok(())
 }
 
 pub async fn run_timeline(args: TimelineArgs) -> Result<()> {
-    let db = Builder::new_local("reflections.db")
-        .experimental_custom_types(true)
-        .build()
-        .await
-        .context("failed to build database")?;
-    let conn = db.connect().context("failed to connect to database")?;
-    schema::init_schema(&conn).await?;
+    let db_path = PathBuf::from(crate::db::DEFAULT_DB_PATH);
     let root_dir = std::env::current_dir().context("failed to get current directory")?;
-    let service = TimelineService::new(conn, root_dir);
+    let service = TimelineService::new(db_path, root_dir);
 
     let range = resolve_time_range_from_args(&args.first, args.second.as_ref())?;
     let entries = service
@@ -125,18 +112,12 @@ pub async fn run_timeline(args: TimelineArgs) -> Result<()> {
 }
 
 pub async fn run_meeting_sync(args: SyncArgs) -> Result<()> {
-    let db = Builder::new_local("reflections.db")
-        .experimental_custom_types(true)
-        .build()
-        .await
-        .context("failed to build database")?;
-    let conn = db.connect().context("failed to connect to database")?;
-    schema::init_schema(&conn).await?;
+    let db_path = PathBuf::from(crate::db::DEFAULT_DB_PATH);
 
     let range = resolve_time_range_from_args(&args.first, args.second.as_ref())?;
     let backend =
         GoogleCalendarBackend::new().context("failed to initialize Google Calendar backend")?;
-    let mut service = MeetingService::new(conn);
+    let mut service = MeetingService::new(db_path);
     let results = service
         .sync_meetings(&backend, range.start, range.end)
         .await
@@ -149,9 +130,8 @@ pub async fn run_meeting_sync(args: SyncArgs) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema;
+    use crate::db::Database;
     use tempfile::tempdir;
-    use turso::Builder;
 
     #[test]
     fn summary_create_args_validation() {
@@ -248,15 +228,9 @@ mod tests {
 
     #[tokio::test]
     async fn create_summary_from_args_full_flow() {
-        let db = Builder::new_local(":memory:")
-            .experimental_custom_types(true)
-            .build()
-            .await
-            .expect("db build failed");
-        let conn = db.connect().expect("db connect failed");
-        schema::init_schema(&conn)
-            .await
-            .expect("schema init failed");
+        let dir = tempdir().expect("create tempdir failed");
+        let db_path = dir.path().join("test.db");
+        let _db = Database::open_path(&db_path).await.expect("db open failed");
         let root_dir = tempdir().expect("create tempdir failed");
         let root_path = root_dir.path().to_path_buf();
 
@@ -265,11 +239,13 @@ mod tests {
             end: "2026-01-31".to_string(),
         };
         let content = "# Summary\n\nThis is test content.";
-        let summary = create_summary_from_args(conn.clone(), root_path.clone(), content, &args)
+        let summary = create_summary_from_args(db_path.clone(), root_path.clone(), content, &args)
             .await
             .expect("create failed");
 
-        let mut rows = conn
+        let db = Database::open_path(&db_path).await.expect("db open failed");
+        let mut rows = db
+            .conn()
             .query(
                 "SELECT summary_id FROM summary WHERE summary_id = ?",
                 [summary.id.to_string()],
@@ -278,7 +254,8 @@ mod tests {
             .expect("query failed");
         assert!(rows.next().await.expect("fetch failed").is_some());
 
-        let mut rows = conn
+        let mut rows = db
+            .conn()
             .query(
                 "SELECT event_type FROM event WHERE entity_id = ? AND event_type = 'SUMMARY_CREATED'",
                 [summary.id.to_string()],
@@ -297,15 +274,9 @@ mod tests {
 
     #[tokio::test]
     async fn create_summary_from_args_empty_content_returns_error() {
-        let db = Builder::new_local(":memory:")
-            .experimental_custom_types(true)
-            .build()
-            .await
-            .expect("db build failed");
-        let conn = db.connect().expect("db connect failed");
-        schema::init_schema(&conn)
-            .await
-            .expect("schema init failed");
+        let dir = tempdir().expect("create tempdir failed");
+        let db_path = dir.path().join("test.db");
+        let _db = Database::open_path(&db_path).await.expect("db open failed");
         let root_dir = tempdir().expect("create tempdir failed");
         let root_path = root_dir.path().to_path_buf();
 
@@ -313,13 +284,15 @@ mod tests {
             start: "2026-01-01".to_string(),
             end: "2026-01-31".to_string(),
         };
-        let result = create_summary_from_args(conn.clone(), root_path, "", &args).await;
+        let result = create_summary_from_args(db_path.clone(), root_path, "", &args).await;
 
         assert!(result.is_err());
         let err = result.expect_err("expected error");
         assert!(err.to_string().contains("stdin content cannot be empty"));
 
-        let mut rows = conn
+        let db = Database::open_path(&db_path).await.expect("db open failed");
+        let mut rows = db
+            .conn()
             .query("SELECT summary_id FROM summary", ())
             .await
             .expect("query failed");
@@ -328,15 +301,9 @@ mod tests {
 
     #[tokio::test]
     async fn create_summary_from_args_json_output_is_valid() {
-        let db = Builder::new_local(":memory:")
-            .experimental_custom_types(true)
-            .build()
-            .await
-            .expect("db build failed");
-        let conn = db.connect().expect("db connect failed");
-        schema::init_schema(&conn)
-            .await
-            .expect("schema init failed");
+        let dir = tempdir().expect("create tempdir failed");
+        let db_path = dir.path().join("test.db");
+        let _db = Database::open_path(&db_path).await.expect("db open failed");
         let root_dir = tempdir().expect("create tempdir failed");
         let root_path = root_dir.path().to_path_buf();
 
@@ -344,7 +311,7 @@ mod tests {
             start: "2026-01-01".to_string(),
             end: "2026-01-31".to_string(),
         };
-        let summary = create_summary_from_args(conn, root_path, "test content", &args)
+        let summary = create_summary_from_args(db_path, root_path, "test content", &args)
             .await
             .expect("create failed");
 

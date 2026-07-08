@@ -152,8 +152,11 @@ impl ReflectionsView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::Database;
     use chrono::Utc;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::path::PathBuf;
+    use tempfile::tempdir;
     use uuid::Uuid;
 
     fn fixed_reflection() -> Reflection {
@@ -177,18 +180,20 @@ mod tests {
         KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE)
     }
 
+    async fn create_test_service() -> (ReflectionService, PathBuf, PathBuf) {
+        let db_dir = tempdir().expect("tempdir failed");
+        let db_path = db_dir.path().join("test.db");
+        let _db = Database::open_path(&db_path).await.expect("db open failed");
+        let root_dir = tempdir().expect("tempdir failed");
+        let root_path = root_dir.path().to_path_buf();
+        let service = ReflectionService::new(db_path.clone(), root_path.clone());
+        (service, db_path, root_path)
+    }
+
     #[tokio::test]
     async fn j_selects_first_item() {
-        let mut view = ReflectionsView::new(ReflectionService::new(
-            turso::Builder::new_local(":memory:")
-                .experimental_custom_types(true)
-                .build()
-                .await
-                .expect("db build failed")
-                .connect()
-                .expect("db connect failed"),
-            tempfile::tempdir().expect("tempdir failed").keep(),
-        ));
+        let (service, _db_path, _root_path) = create_test_service().await;
+        let mut view = ReflectionsView::new(service);
         view.set_items(vec![fixed_reflection(), fixed_reflection()]);
 
         view.handle_key(key_j()).await.expect("handle_key failed");
@@ -197,16 +202,8 @@ mod tests {
 
     #[tokio::test]
     async fn j_then_j_selects_second_item() {
-        let mut view = ReflectionsView::new(ReflectionService::new(
-            turso::Builder::new_local(":memory:")
-                .experimental_custom_types(true)
-                .build()
-                .await
-                .expect("db build failed")
-                .connect()
-                .expect("db connect failed"),
-            tempfile::tempdir().expect("tempdir failed").keep(),
-        ));
+        let (service, _db_path, _root_path) = create_test_service().await;
+        let mut view = ReflectionsView::new(service);
         view.set_items(vec![fixed_reflection(), fixed_reflection()]);
 
         view.handle_key(key_j()).await.expect("handle_key failed");
@@ -216,16 +213,8 @@ mod tests {
 
     #[tokio::test]
     async fn k_at_first_stays_at_first() {
-        let mut view = ReflectionsView::new(ReflectionService::new(
-            turso::Builder::new_local(":memory:")
-                .experimental_custom_types(true)
-                .build()
-                .await
-                .expect("db build failed")
-                .connect()
-                .expect("db connect failed"),
-            tempfile::tempdir().expect("tempdir failed").keep(),
-        ));
+        let (service, _db_path, _root_path) = create_test_service().await;
+        let mut view = ReflectionsView::new(service);
         view.set_items(vec![fixed_reflection(), fixed_reflection()]);
 
         view.handle_key(key_j()).await.expect("handle_key failed");
@@ -235,32 +224,16 @@ mod tests {
 
     #[tokio::test]
     async fn j_on_empty_list_does_nothing() {
-        let mut view = ReflectionsView::new(ReflectionService::new(
-            turso::Builder::new_local(":memory:")
-                .experimental_custom_types(true)
-                .build()
-                .await
-                .expect("db build failed")
-                .connect()
-                .expect("db connect failed"),
-            tempfile::tempdir().expect("tempdir failed").keep(),
-        ));
+        let (service, _db_path, _root_path) = create_test_service().await;
+        let mut view = ReflectionsView::new(service);
         view.handle_key(key_j()).await.expect("handle_key failed");
         assert_eq!(view.selected_index(), None);
     }
 
     #[tokio::test]
     async fn k_on_empty_list_does_nothing() {
-        let mut view = ReflectionsView::new(ReflectionService::new(
-            turso::Builder::new_local(":memory:")
-                .experimental_custom_types(true)
-                .build()
-                .await
-                .expect("db build failed")
-                .connect()
-                .expect("db connect failed"),
-            tempfile::tempdir().expect("tempdir failed").keep(),
-        ));
+        let (service, _db_path, _root_path) = create_test_service().await;
+        let mut view = ReflectionsView::new(service);
         view.handle_key(key_k()).await.expect("handle_key failed");
         assert_eq!(view.selected_index(), None);
     }
