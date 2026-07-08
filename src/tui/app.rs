@@ -426,6 +426,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn modal_overflow_text_wraps_and_grows() {
+        let mut app = test_app().await;
+        app.todo_list_view
+            .set_items(vec![fixed_item("buy groceries")]);
+        app.todo_list_view.open_modal();
+
+        for c in "this is a very long todo item description that keeps going well past the \
+                  inner width of the modal so the text must wrap onto multiple lines"
+            .chars()
+        {
+            app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+                .await
+                .expect("handle_key failed");
+        }
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("terminal creation");
+        terminal
+            .draw(|frame| render_app(&mut app, frame))
+            .expect("failed to draw");
+        insta::assert_snapshot!("modal open overflow", terminal.backend());
+    }
+
+    #[tokio::test]
     async fn selected_item_render() {
         let mut app = test_app().await;
         app.todo_list_view
@@ -663,6 +687,31 @@ mod tests {
             .draw(|frame| render_app(&mut app, frame))
             .expect("failed to draw");
         insta::assert_snapshot!("meeting modal open", terminal.backend());
+    }
+
+    #[tokio::test]
+    async fn meeting_modal_long_name_wraps_and_grows() {
+        let mut app = test_app().await;
+        app.active_tab = Tab::Meetings;
+        app.meetings_view.set_items(vec![fixed_meeting("Standup")]);
+        app.meetings_view.open_modal();
+        app.meetings_view.set_datetime_for_test(2024, 1, 15, 10, 30);
+
+        for c in "an extraordinarily verbose meeting title that overflows the modal \
+                  inner width and therefore wraps"
+            .chars()
+        {
+            app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+                .await
+                .expect("handle_key failed");
+        }
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("terminal creation");
+        terminal
+            .draw(|frame| render_app(&mut app, frame))
+            .expect("failed to draw");
+        insta::assert_snapshot!("meeting modal long name", terminal.backend());
     }
 
     #[tokio::test]

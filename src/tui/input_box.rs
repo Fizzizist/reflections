@@ -67,25 +67,61 @@ impl InputBox {
         }
     }
 
-    pub fn render(&self, frame: &mut Frame, area: Rect, style: Style) {
-        let display = if self.cursor_pos >= self.buffer.len() {
+    fn display_string(&self) -> String {
+        if self.cursor_pos >= self.buffer.len() {
             format!("{}█", self.buffer)
         } else {
             let (before, after) = self.buffer.split_at(self.cursor_pos);
             format!("{}█{}", before, after)
-        };
-        frame.render_widget(Paragraph::new(display).style(style), area);
+        }
+    }
+
+    pub fn wrapped_lines(&self, width: u16) -> Vec<String> {
+        let width = usize::from(width.max(1));
+        let chars: Vec<char> = self.display_string().chars().collect();
+        let mut lines: Vec<String> = chars
+            .chunks(width)
+            .map(|chunk| chunk.iter().collect())
+            .collect();
+        if lines.is_empty() {
+            lines.push(String::new());
+        }
+        lines
+    }
+
+    pub fn line_count(&self, width: u16) -> u16 {
+        u16::try_from(self.wrapped_lines(width).len())
+            .unwrap_or(u16::MAX)
+            .max(1)
+    }
+
+    pub fn render(&self, frame: &mut Frame, area: Rect, style: Style) {
+        let lines: Vec<Line> = self
+            .wrapped_lines(area.width)
+            .into_iter()
+            .map(Line::from)
+            .collect();
+        frame.render_widget(Paragraph::new(lines).style(style), area);
     }
 
     pub fn render_labeled(&self, frame: &mut Frame, area: Rect, label: &str, style: Style) {
-        let display = if self.cursor_pos >= self.buffer.len() {
-            format!("{}█", self.buffer)
-        } else {
-            let (before, after) = self.buffer.split_at(self.cursor_pos);
-            format!("{}█{}", before, after)
-        };
-        let line = Line::from(vec![Span::raw(label), Span::styled(display, style)]);
-        frame.render_widget(Paragraph::new(line), area);
+        let label_width = u16::try_from(label.chars().count()).unwrap_or(u16::MAX);
+        let content_width = area.width.saturating_sub(label_width).max(1);
+        let indent = " ".repeat(usize::from(label_width));
+        let lines: Vec<Line> = self
+            .wrapped_lines(content_width)
+            .into_iter()
+            .enumerate()
+            .map(|(i, chunk)| {
+                let prefix = if i == 0 {
+                    label.to_string()
+                } else {
+                    indent.clone()
+                };
+                Line::from(vec![Span::raw(prefix), Span::styled(chunk, style)])
+            })
+            .collect();
+        frame.render_widget(Paragraph::new(lines), area);
     }
 }
 
@@ -232,5 +268,74 @@ mod tests {
         input.clear();
         assert_eq!(input.value(), "");
         assert_eq!(input.cursor_pos(), 0);
+    }
+
+    #[test]
+    fn wrapped_lines_empty_buffer_is_single_cursor_line() {
+        let input = InputBox::new();
+        assert_eq!(input.wrapped_lines(10), vec!["█".to_string()]);
+        assert_eq!(input.line_count(10), 1);
+    }
+
+    #[test]
+    fn wrapped_lines_sub_width_text_is_single_line() {
+        let mut input = InputBox::new();
+        for c in "hello".chars() {
+            input.handle_key(key_char(c));
+        }
+        assert_eq!(input.wrapped_lines(10), vec!["hello█".to_string()]);
+        assert_eq!(input.line_count(10), 1);
+    }
+
+    #[test]
+    fn cursor_glyph_at_exact_width_boundary_pushes_a_wrap() {
+        let mut input = InputBox::new();
+        for c in "abcde".chars() {
+            input.handle_key(key_char(c));
+        }
+        assert_eq!(
+            input.wrapped_lines(5),
+            vec!["abcde".to_string(), "█".to_string()]
+        );
+        assert_eq!(input.line_count(5), 2);
+    }
+
+    #[test]
+    fn wrapped_lines_multi_line_overflow() {
+        let mut input = InputBox::new();
+        for _ in 0..12 {
+            input.handle_key(key_char('x'));
+        }
+        assert_eq!(
+            input.wrapped_lines(5),
+            vec!["xxxxx".to_string(), "xxxxx".to_string(), "xx█".to_string()]
+        );
+        assert_eq!(input.line_count(5), 3);
+    }
+
+    #[test]
+    fn wrapped_lines_mid_string_cursor_splices_glyph() {
+        let mut input = InputBox::new();
+        for c in "abcdef".chars() {
+            input.handle_key(key_char(c));
+        }
+        input.handle_key(key_left());
+        input.handle_key(key_left());
+        assert_eq!(
+            input.wrapped_lines(4),
+            vec!["abcd".to_string(), "█ef".to_string()]
+        );
+        assert_eq!(input.line_count(4), 2);
+    }
+
+    #[test]
+    fn wrapped_lines_zero_width_treated_as_one() {
+        let mut input = InputBox::new();
+        input.handle_key(key_char('a'));
+        assert_eq!(
+            input.wrapped_lines(0),
+            vec!["a".to_string(), "█".to_string()]
+        );
+        assert_eq!(input.line_count(0), 2);
     }
 }
