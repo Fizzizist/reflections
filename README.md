@@ -50,6 +50,8 @@ Running `reflect` with no arguments bring you into the TUI.
 - `n` -- Write a note about a selected entity.
 - `N` -- Write a note not tied to anything in particular.
 - `a` -- add new item (todo item, meetings).
+- `A` -- toggle showing all todo items, including those marked DONE.
+- `u` -- update the status of the selected todo item.
 - `e` -- edit a summary (while viewing a summary).
 - `Enter` -- view selected item (todo item, meeting, summary).
 - `j`, `k`, `h`, `l` -- navigation

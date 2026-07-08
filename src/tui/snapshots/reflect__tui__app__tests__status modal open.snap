@@ -15,7 +15,7 @@ expression: terminal.backend()
 "│                        │ NEW                        │                        │"
 "│                        │ IN_PROGRESS                │                        │"
 "│                        │ DONE                       │                        │"
-"│                        │                            │                        │"
+"│                        │ CANCELED                   │                        │"
 "│                        │                            │                        │"
 "│                        └────────────────────────────┘                        │"
 "│                                                                              │"

@@ -18,7 +18,7 @@ impl StatusModal {
     pub fn new() -> Self {
         Self {
             active: false,
-            statuses: vec![TodoStatus::New, TodoStatus::InProgress, TodoStatus::Done],
+            statuses: TodoStatus::vec(),
             selected_index: 0,
             target_item_id: None,
         }
@@ -34,6 +34,7 @@ impl StatusModal {
             TodoStatus::New => 0,
             TodoStatus::InProgress => 1,
             TodoStatus::Done => 2,
+            TodoStatus::Canceled => 3,
         };
         self.active = true;
     }
@@ -183,11 +184,11 @@ mod tests {
     #[test]
     fn j_at_bottom_does_nothing() {
         let mut modal = StatusModal::new();
-        modal.open(Uuid::now_v7(), &TodoStatus::Done);
-        assert_eq!(modal.selected_index, 2);
+        modal.open(Uuid::now_v7(), &TodoStatus::Canceled);
+        assert_eq!(modal.selected_index, 3);
 
         modal.handle_key(key_char('j'));
-        assert_eq!(modal.selected_index, 2);
+        assert_eq!(modal.selected_index, 3);
     }
 
     #[test]
