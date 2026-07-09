@@ -1,6 +1,6 @@
 [package]
 name = "reflections"
-version = "1.6.7"
+version = "1.6.8"
 edition = "2024"
 description = "A work journaling app with TUI and CLI"
 license = "MIT"
