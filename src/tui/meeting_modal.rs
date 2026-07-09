@@ -341,14 +341,20 @@ impl MeetingModal {
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
-        let modal_width = 60;
-        let modal_height = 11;
+        let name_label = "Name: ";
+        let modal_width = 60u16.min(area.width);
+        let field_width = modal_width.saturating_sub(4).max(1);
+        let name_content_width = field_width
+            .saturating_sub(u16::try_from(name_label.chars().count()).unwrap_or(u16::MAX))
+            .max(1);
+        let name_lines = self.name_input.line_count(name_content_width);
+        let modal_height = (name_lines + 6).max(7).min(area.height);
 
         let modal_area = Rect::new(
             area.x + (area.width.saturating_sub(modal_width)) / 2,
             area.y + (area.height.saturating_sub(modal_height)) / 2,
-            modal_width.min(area.width),
-            modal_height.min(area.height),
+            modal_width,
+            modal_height,
         );
 
         frame.render_widget(Clear, modal_area);
@@ -364,9 +370,14 @@ impl MeetingModal {
             Style::default()
         };
 
-        let name_area = Rect::new(inner.x + 1, inner.y + 1, inner.width.saturating_sub(2), 1);
+        let name_area = Rect::new(
+            inner.x + 1,
+            inner.y + 1,
+            inner.width.saturating_sub(2),
+            name_lines,
+        );
         self.name_input
-            .render_labeled(frame, name_area, "Name: ", name_style);
+            .render_labeled(frame, name_area, name_label, name_style);
 
         let datetime_line = if self.field_focus == FieldFocus::Datetime {
             self.render_datetime_spans()
@@ -377,7 +388,8 @@ impl MeetingModal {
             ])
         };
 
-        let datetime_area = Rect::new(inner.x + 1, inner.y + 3, inner.width.saturating_sub(2), 1);
+        let datetime_y = (inner.y + 2 + name_lines).min(inner.y + inner.height.saturating_sub(1));
+        let datetime_area = Rect::new(inner.x + 1, datetime_y, inner.width.saturating_sub(2), 1);
         frame.render_widget(
             ratatui::widgets::Paragraph::new(datetime_line),
             datetime_area,

@@ -1,0 +1,14 @@
+---
+source: src/tui/app.rs
+expression: terminal.backend()
+---
+" Todo List │ Meetings │ Reflections │ Su"
+"┌Add Meeting───────────────────────────┐"
+"│                                      │"
+"│ Name: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa │"
+"│       aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa │"
+"│       aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa │"
+"│       aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa │"
+"│       aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa │"
+"│ When: 2024-01-15 10:30aaaaaaaaaaaaaa │"
+"└─      aaaaaaaaaaaaaaaaaaaa█──────────┘"

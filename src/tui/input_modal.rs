@@ -50,8 +50,11 @@ impl InputModal {
         if !self.active {
             return;
         }
-        let width = 60u16;
-        let height = 7u16;
+        let width = 60u16.min(area.width);
+        let inner_width = width.saturating_sub(2).max(1);
+        let height = (self.input.line_count(inner_width) + 2)
+            .max(3)
+            .min(area.height);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
         let modal_area = Rect::new(x, y, width, height);
