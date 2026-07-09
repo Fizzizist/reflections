@@ -52,7 +52,7 @@ pub async fn insert(tx: &Transaction<'_>, label: &str) -> Result<TodoItem> {
 }
 
 pub async fn list_active(conn: &Connection) -> Result<Vec<TodoItem>> {
-    let sql = "SELECT todo_item_id, label, status, created_at, updated_at FROM todo_item WHERE status != 'DONE' ORDER BY created_at ASC";
+    let sql = "SELECT todo_item_id, label, status, created_at, updated_at FROM todo_item WHERE status NOT IN ('DONE', 'CANCELED') ORDER BY created_at ASC";
     let mut rows = conn.query(sql, ()).await?;
 
     let mut items = Vec::new();
