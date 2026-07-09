@@ -1,6 +1,6 @@
 [package]
 name = "reflections"
-version = "1.6.9"
+version = "1.6.10"
 edition = "2024"
 description = "A work journaling app with TUI and CLI"
 license = "MIT"
@@ -23,7 +23,7 @@ futures = "0.3.32"
 hjkl-splash = "0.32.0"
 insta = "1.48.0"
 open = "5.3.6"
-ratatui = "0.30.2"
+ratatui = { version = "0.30.2", features = ["unstable-rendered-line-info"] }
 regex = "1.12.4"
 reqwest = { version = "0.13.4", features = ["json"] }
 serde = { version = "1.0.228", features = ["derive"] }

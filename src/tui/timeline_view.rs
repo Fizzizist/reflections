@@ -4,7 +4,6 @@ use crate::tui::highlight::build_renderer;
 use anyhow::Result;
 use chrono::Local;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use crossterm::terminal;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -32,6 +31,7 @@ pub struct TimelineView {
     entries: Vec<TimelineEntry>,
     title: String,
     scroll_offset: usize,
+    viewport_height: usize,
 }
 
 impl TimelineView {
@@ -41,6 +41,7 @@ impl TimelineView {
             entries,
             title: title.to_string(),
             scroll_offset: 0,
+            viewport_height: 0,
         })
     }
 
@@ -48,14 +49,21 @@ impl TimelineView {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => true,
             KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                // if it can't actually get a height, just use a reasonable default
-                let (_, height) = terminal::size().unwrap_or((0, 24));
-                self.scroll_down((height / 2).into());
+                let height = if self.viewport_height > 0 {
+                    self.viewport_height
+                } else {
+                    24
+                };
+                self.scroll_down(height / 2);
                 false
             }
             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                let (_, height) = terminal::size().unwrap_or((0, 24));
-                self.scroll_up((height / 2).into());
+                let height = if self.viewport_height > 0 {
+                    self.viewport_height
+                } else {
+                    24
+                };
+                self.scroll_up(height / 2);
                 false
             }
             _ => false,
@@ -74,6 +82,8 @@ impl TimelineView {
             return;
         }
 
+        self.viewport_height = inner.height as usize;
+
         let markdown_content = if self.entries.is_empty() {
             "No events found for this entity.".to_string()
         } else {
@@ -81,14 +91,14 @@ impl TimelineView {
         };
 
         let text = into_text_with_renderer(&markdown_content, &RENDERER);
-        let content_height = text.lines.len();
+
+        let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
+        let content_height = paragraph.line_count(inner.width);
         let max_scroll = content_height.saturating_sub(inner.height as usize);
 
         self.scroll_offset = self.scroll_offset.min(max_scroll);
 
-        let paragraph = Paragraph::new(text)
-            .scroll((self.scroll_offset as u16, 0))
-            .wrap(Wrap { trim: false });
+        let paragraph = paragraph.scroll((self.scroll_offset as u16, 0));
 
         frame.render_widget(paragraph, inner);
     }
@@ -225,6 +235,7 @@ impl TimelineView {
             entries,
             title: title.to_string(),
             scroll_offset: 0,
+            viewport_height: 0,
         }
     }
 
@@ -403,6 +414,7 @@ mod tests {
             entries: vec![],
             title: "Test Timeline".to_string(),
             scroll_offset: 0,
+            viewport_height: 0,
         };
         let output = render_view(&mut view);
         insta::assert_snapshot!("empty_timeline", output);
@@ -414,6 +426,7 @@ mod tests {
             entries: vec![make_todo_created_entry("Test todo item")],
             title: "Todo Timeline".to_string(),
             scroll_offset: 0,
+            viewport_height: 0,
         };
         let output = render_view(&mut view);
         insta::assert_snapshot!("todo_timeline", output);
@@ -428,6 +441,7 @@ mod tests {
             ],
             title: "Todo Timeline".to_string(),
             scroll_offset: 0,
+            viewport_height: 0,
         };
         let output = render_view(&mut view);
         insta::assert_snapshot!("todo_status_change", output);
@@ -441,6 +455,7 @@ mod tests {
             ))],
             title: "Reflection Timeline".to_string(),
             scroll_offset: 0,
+            viewport_height: 0,
         };
         let output = render_view(&mut view);
         insta::assert_snapshot!("reflection_timeline", output);
@@ -456,6 +471,7 @@ mod tests {
             ],
             title: "Test".to_string(),
             scroll_offset: 0,
+            viewport_height: 0,
         };
 
         let key = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL);
@@ -470,6 +486,7 @@ mod tests {
             entries: vec![make_todo_created_entry("Test")],
             title: "Test".to_string(),
             scroll_offset: 10,
+            viewport_height: 0,
         };
 
         let key = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL);
@@ -487,6 +504,7 @@ mod tests {
             entries: vec![make_todo_created_entry("Test")],
             title: "Test".to_string(),
             scroll_offset: 0,
+            viewport_height: 0,
         };
 
         let key = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL);
@@ -501,6 +519,7 @@ mod tests {
             entries: vec![],
             title: "Test".to_string(),
             scroll_offset: 0,
+            viewport_height: 0,
         };
 
         let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
@@ -515,6 +534,7 @@ mod tests {
             entries: vec![],
             title: "Test".to_string(),
             scroll_offset: 0,
+            viewport_height: 0,
         };
 
         let key = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
@@ -529,6 +549,7 @@ mod tests {
             entries: vec![make_meeting_created_entry("Team Standup")],
             title: "Meeting Timeline".to_string(),
             scroll_offset: 0,
+            viewport_height: 0,
         };
         let output = render_view(&mut view);
         insta::assert_snapshot!("meeting_timeline", output);
@@ -540,6 +561,7 @@ mod tests {
             entries: vec![make_note_created_entry(Some("This is a note content"))],
             title: "Note Timeline".to_string(),
             scroll_offset: 0,
+            viewport_height: 0,
         };
         let output = render_view(&mut view);
         insta::assert_snapshot!("note_timeline", output);
@@ -551,8 +573,141 @@ mod tests {
             entries: vec![make_summary_created_entry(Some("Weekly summary content"))],
             title: "Summary Timeline".to_string(),
             scroll_offset: 0,
+            viewport_height: 0,
         };
         let output = render_view(&mut view);
         insta::assert_snapshot!("summary_timeline", output);
+    }
+
+    fn render_narrow(view: &mut TimelineView) -> String {
+        ensure_utc_tz();
+        let backend = TestBackend::new(30, 10);
+        let mut terminal = Terminal::new(backend).expect("terminal creation failed");
+        terminal
+            .draw(|frame| view.render(frame, frame.area()))
+            .expect("draw failed");
+        terminal.backend().to_string()
+    }
+
+    #[test]
+    fn scroll_to_bottom_with_wrapped_content() {
+        let long_content = "This is a very long line that will definitely wrap when rendered in a narrow terminal width of thirty columns and it keeps going on and on to ensure it exceeds the viewport height so we can verify scrolling works correctly with wrapped lines that produce more visual lines than logical lines";
+        let mut view = TimelineView {
+            entries: vec![make_reflection_created_entry(Some(long_content))],
+            title: "Test".to_string(),
+            scroll_offset: 0,
+            viewport_height: 0,
+        };
+
+        render_narrow(&mut view);
+        let initial_offset = view.scroll_offset();
+
+        view.scroll_offset = 100;
+        render_narrow(&mut view);
+        let max_after_clamp = view.scroll_offset();
+
+        assert!(
+            max_after_clamp > 0,
+            "max_scroll should be > 0 with wrapped content"
+        );
+        assert!(
+            max_after_clamp < 100,
+            "scroll_offset should be clamped below 100"
+        );
+        assert_eq!(initial_offset, 0, "initial scroll_offset should be 0");
+    }
+
+    #[test]
+    fn scroll_offset_clamped_to_max_with_wrapping() {
+        let long_content = "AaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaBbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbCccccccccccccccccccccccccccccc";
+        let mut view = TimelineView {
+            entries: vec![make_reflection_created_entry(Some(long_content))],
+            title: "Test".to_string(),
+            scroll_offset: 0,
+            viewport_height: 0,
+        };
+
+        render_narrow(&mut view);
+        let max_scroll = view.scroll_offset();
+
+        for _ in 0..20 {
+            let key = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL);
+            view.handle_key(key);
+            render_narrow(&mut view);
+        }
+
+        assert_eq!(
+            view.scroll_offset(),
+            max_scroll,
+            "scroll_offset should be clamped to max_scroll after repeated scrolling"
+        );
+    }
+
+    #[test]
+    fn scroll_step_uses_viewport_height_after_render() {
+        let long_content = "This is a very long line that will definitely wrap when rendered in a narrow terminal width of thirty columns and it keeps going on and on to ensure it exceeds the viewport height so we can verify scrolling works correctly with wrapped lines that produce more visual lines than logical lines";
+        let mut view = TimelineView {
+            entries: vec![make_reflection_created_entry(Some(long_content))],
+            title: "Test".to_string(),
+            scroll_offset: 0,
+            viewport_height: 0,
+        };
+
+        render_narrow(&mut view);
+
+        let expected_step = view.viewport_height / 2;
+
+        let key = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL);
+        view.handle_key(key);
+
+        assert_eq!(
+            view.scroll_offset(),
+            expected_step,
+            "scroll step should match viewport_height / 2, not fallback 12"
+        );
+    }
+
+    #[test]
+    fn no_scroll_when_content_fits_in_viewport() {
+        let mut view = TimelineView {
+            entries: vec![make_todo_created_entry("Short")],
+            title: "Test".to_string(),
+            scroll_offset: 0,
+            viewport_height: 0,
+        };
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("terminal creation failed");
+        terminal
+            .draw(|frame| view.render(frame, frame.area()))
+            .expect("draw failed");
+
+        assert_eq!(
+            view.scroll_offset(),
+            0,
+            "max_scroll should be 0 for short content"
+        );
+
+        let key = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL);
+        view.handle_key(key);
+        terminal
+            .draw(|frame| view.render(frame, frame.area()))
+            .expect("draw failed");
+        assert_eq!(
+            view.scroll_offset(),
+            0,
+            "Ctrl+d should have no effect when content fits"
+        );
+
+        let key = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL);
+        view.handle_key(key);
+        terminal
+            .draw(|frame| view.render(frame, frame.area()))
+            .expect("draw failed");
+        assert_eq!(
+            view.scroll_offset(),
+            0,
+            "Ctrl+u should have no effect when content fits"
+        );
     }
 }
