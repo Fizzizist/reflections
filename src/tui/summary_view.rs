@@ -4,7 +4,6 @@ use crate::tui::editor;
 use crate::tui::highlight::build_renderer;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use crossterm::terminal;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -30,6 +29,7 @@ pub struct SummaryView {
     summary: Summary,
     content: String,
     scroll_offset: usize,
+    viewport_height: usize,
     editor_fn: editor::EditorFn,
 }
 
@@ -44,6 +44,7 @@ impl SummaryView {
             summary,
             content,
             scroll_offset: 0,
+            viewport_height: 0,
             editor_fn,
         })
     }
@@ -61,14 +62,21 @@ impl SummaryView {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => Ok(true),
             KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                // if it can't actually get a height, just use a reasonable default
-                let (_, height) = terminal::size().unwrap_or((0, 24));
-                self.scroll_down((height / 2).into());
+                let height = if self.viewport_height > 0 {
+                    self.viewport_height
+                } else {
+                    24
+                };
+                self.scroll_down(height / 2);
                 Ok(false)
             }
             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                let (_, height) = terminal::size().unwrap_or((0, 24));
-                self.scroll_up((height / 2).into());
+                let height = if self.viewport_height > 0 {
+                    self.viewport_height
+                } else {
+                    24
+                };
+                self.scroll_up(height / 2);
                 Ok(false)
             }
             KeyCode::Char('e') => {
@@ -89,15 +97,17 @@ impl SummaryView {
             return;
         }
 
+        self.viewport_height = inner.height as usize;
+
         let text = into_text_with_renderer(&self.content, &RENDERER);
-        let content_height = text.lines.len();
+
+        let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
+        let content_height = paragraph.line_count(inner.width);
         let max_scroll = content_height.saturating_sub(inner.height as usize);
 
         self.scroll_offset = self.scroll_offset.min(max_scroll);
 
-        let paragraph = Paragraph::new(text)
-            .scroll((self.scroll_offset as u16, 0))
-            .wrap(Wrap { trim: false });
+        let paragraph = paragraph.scroll((self.scroll_offset as u16, 0));
 
         frame.render_widget(paragraph, inner);
     }
@@ -108,5 +118,98 @@ impl SummaryView {
 
     fn scroll_up(&mut self, half_page: usize) {
         self.scroll_offset = self.scroll_offset.saturating_sub(half_page);
+    }
+}
+
+#[cfg(test)]
+impl SummaryView {
+    pub fn new_for_test(summary: Summary, content: &str) -> Self {
+        Self {
+            summary,
+            content: content.to_string(),
+            scroll_offset: 0,
+            viewport_height: 0,
+            editor_fn: editor::default_editor_fn(),
+        }
+    }
+
+    pub fn scroll_offset(&self) -> usize {
+        self.scroll_offset
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{DateTime, Duration, Utc};
+    use ratatui::{Terminal, backend::TestBackend};
+    use uuid::Uuid;
+
+    fn fixed_time() -> DateTime<Utc> {
+        chrono::DateTime::parse_from_rfc3339("2024-01-15T10:30:00Z")
+            .expect("parse failed")
+            .with_timezone(&Utc)
+    }
+
+    fn make_summary() -> Summary {
+        let t = fixed_time();
+        Summary {
+            id: Uuid::now_v7(),
+            file_path: "test.md".to_string(),
+            start: t,
+            end: t + Duration::hours(1),
+            created_at: t,
+            updated_at: t,
+        }
+    }
+
+    fn render_narrow(view: &mut SummaryView) -> String {
+        let backend = TestBackend::new(30, 10);
+        let mut terminal = Terminal::new(backend).expect("terminal creation failed");
+        terminal
+            .draw(|frame| view.render(frame, frame.area()))
+            .expect("draw failed");
+        terminal.backend().to_string()
+    }
+
+    #[test]
+    fn scroll_to_bottom_with_wrapped_content() {
+        let long_content = "This is a very long line that will definitely wrap when rendered in a narrow terminal width of thirty columns and it keeps going on and on to ensure it exceeds the viewport height so we can verify scrolling works correctly with wrapped lines that produce more visual lines than logical lines";
+        let mut view = SummaryView::new_for_test(make_summary(), long_content);
+
+        render_narrow(&mut view);
+        let initial_offset = view.scroll_offset();
+
+        view.scroll_offset = 100;
+        render_narrow(&mut view);
+        let max_after_clamp = view.scroll_offset();
+
+        assert!(
+            max_after_clamp > 0,
+            "max_scroll should be > 0 with wrapped content"
+        );
+        assert!(
+            max_after_clamp < 100,
+            "scroll_offset should be clamped below 100"
+        );
+        assert_eq!(initial_offset, 0, "initial scroll_offset should be 0");
+    }
+
+    #[test]
+    fn scroll_offset_clamped_to_max_with_wrapping() {
+        let long_content = "AaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaBbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbCccccccccccccccccccccccccccccc";
+        let mut view = SummaryView::new_for_test(make_summary(), long_content);
+
+        render_narrow(&mut view);
+        let max_scroll = view.scroll_offset();
+
+        view.scroll_offset = 100;
+        render_narrow(&mut view);
+
+        assert_eq!(
+            view.scroll_offset(),
+            max_scroll,
+            "scroll_offset should be clamped to max_scroll after setting high value"
+        );
     }
 }
