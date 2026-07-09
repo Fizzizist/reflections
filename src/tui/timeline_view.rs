@@ -642,4 +642,72 @@ mod tests {
             "scroll_offset should be clamped to max_scroll after repeated scrolling"
         );
     }
+
+    #[test]
+    fn scroll_step_uses_viewport_height_after_render() {
+        let long_content = "This is a very long line that will definitely wrap when rendered in a narrow terminal width of thirty columns and it keeps going on and on to ensure it exceeds the viewport height so we can verify scrolling works correctly with wrapped lines that produce more visual lines than logical lines";
+        let mut view = TimelineView {
+            entries: vec![make_reflection_created_entry(Some(long_content))],
+            title: "Test".to_string(),
+            scroll_offset: 0,
+            viewport_height: 0,
+        };
+
+        render_narrow(&mut view);
+
+        let expected_step = view.viewport_height / 2;
+
+        let key = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL);
+        view.handle_key(key);
+
+        assert_eq!(
+            view.scroll_offset(),
+            expected_step,
+            "scroll step should match viewport_height / 2, not fallback 12"
+        );
+    }
+
+    #[test]
+    fn no_scroll_when_content_fits_in_viewport() {
+        let mut view = TimelineView {
+            entries: vec![make_todo_created_entry("Short")],
+            title: "Test".to_string(),
+            scroll_offset: 0,
+            viewport_height: 0,
+        };
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("terminal creation failed");
+        terminal
+            .draw(|frame| view.render(frame, frame.area()))
+            .expect("draw failed");
+
+        assert_eq!(
+            view.scroll_offset(),
+            0,
+            "max_scroll should be 0 for short content"
+        );
+
+        let key = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL);
+        view.handle_key(key);
+        terminal
+            .draw(|frame| view.render(frame, frame.area()))
+            .expect("draw failed");
+        assert_eq!(
+            view.scroll_offset(),
+            0,
+            "Ctrl+d should have no effect when content fits"
+        );
+
+        let key = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL);
+        view.handle_key(key);
+        terminal
+            .draw(|frame| view.render(frame, frame.area()))
+            .expect("draw failed");
+        assert_eq!(
+            view.scroll_offset(),
+            0,
+            "Ctrl+u should have no effect when content fits"
+        );
+    }
 }
