@@ -1,7 +1,8 @@
 use super::splash;
+use crate::models::summary::Summary;
 use crate::services::summary::SummaryService;
+use crate::tui::content_view::ContentView;
 use crate::tui::editor;
-use crate::{models::summary::Summary, tui::summary_view::SummaryView};
 use anyhow::Result;
 use chrono::Local;
 use crossterm::event::{KeyCode, KeyEvent};
@@ -17,7 +18,7 @@ pub struct SummariesView {
     labels: Vec<String>,
     selected_index: Option<usize>,
     service: SummaryService,
-    summary_view: Option<SummaryView>,
+    content_view: Option<ContentView<Summary, SummaryService>>,
     editor_fn: editor::EditorFn,
 }
 
@@ -28,7 +29,7 @@ impl SummariesView {
             labels: Vec::new(),
             selected_index: None,
             service,
-            summary_view: None,
+            content_view: None,
             editor_fn,
         }
     }
@@ -66,13 +67,12 @@ impl SummariesView {
     }
 
     pub async fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
-        if let Some(summary_view) = &mut self.summary_view {
-            if summary_view.handle_key(key, &mut self.service).await? {
-                self.summary_view = None;
+        if let Some(content_view) = &mut self.content_view {
+            if content_view.handle_key(key, &mut self.service).await? {
+                self.content_view = None;
                 return Ok(false);
             }
-            // last key might have been an edit key, so refresh to make sure content is up to date.
-            summary_view.refresh(&self.service).await?;
+            content_view.refresh(&self.service).await?;
             return Ok(true);
         }
         match key.code {
@@ -95,8 +95,14 @@ impl SummariesView {
                 if let Some(idx) = self.selected_index
                     && let Some(item) = self.items.get(idx) =>
             {
-                self.summary_view = Some(
-                    SummaryView::open(&self.service, item.clone(), self.editor_fn.clone()).await?,
+                self.content_view = Some(
+                    ContentView::open(
+                        &self.service,
+                        item.clone(),
+                        "Summary",
+                        self.editor_fn.clone(),
+                    )
+                    .await?,
                 );
             }
             _ => {}
@@ -106,8 +112,8 @@ impl SummariesView {
     }
 
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
-        if let Some(summary_view) = &mut self.summary_view {
-            summary_view.render(frame, area);
+        if let Some(content_view) = &mut self.content_view {
+            content_view.render(frame, area);
             return;
         }
         let block = Block::default().borders(Borders::ALL).title("Summaries");
@@ -175,10 +181,10 @@ impl SummariesView {
     }
 
     pub fn is_modal_active(&self) -> bool {
-        self.summary_view.is_some()
+        self.content_view.is_some()
     }
 
-    pub fn is_summary_view_active(&self) -> bool {
-        self.summary_view.is_some()
+    pub fn is_content_view_active(&self) -> bool {
+        self.content_view.is_some()
     }
 }

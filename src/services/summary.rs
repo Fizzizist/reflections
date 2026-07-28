@@ -11,7 +11,7 @@ use crate::models::event::EventType;
 use crate::models::summary::Summary;
 use crate::repositories;
 use crate::repositories::summary::SummaryFilter;
-use crate::services::editable::EditableEntity;
+use crate::services::editable::{EditableEntity, ReadableEntity};
 use crate::services::tag;
 use crate::with_conn;
 use crate::with_txn;
@@ -80,30 +80,6 @@ impl SummaryService {
         Ok(title)
     }
 
-    pub async fn get_content(&self, summary_id: Uuid) -> Result<String> {
-        with_conn!(&self.db_path, |conn| {
-            async {
-                if let Some(summary) =
-                    repositories::summary::find_one(conn, &SummaryFilter::new().id(summary_id))
-                        .await?
-                {
-                    let full_path = self.root_dir.join(summary.file_path.clone());
-                    if let Ok(content) = fs::read_to_string(&full_path).await {
-                        return Ok(content);
-                    }
-                    return Err(anyhow::anyhow!(format!(
-                        "Unable to retrieve summary content: No content at {}.",
-                        summary.file_path
-                    )));
-                }
-                Err(anyhow::anyhow!(
-                    "Unable to retrieve summary content: Summary not found."
-                ))
-            }
-            .await
-        })
-    }
-
     pub async fn post_edit_summary(
         &mut self,
         summary_id: &Uuid,
@@ -140,6 +116,31 @@ impl EditableEntity for SummaryService {
 
     async fn post_edit(&mut self, id: Uuid, diff: Vec<DiffEntry>) -> Result<()> {
         self.post_edit_summary(&id, diff).await
+    }
+}
+
+impl ReadableEntity for SummaryService {
+    async fn get_content(&self, id: Uuid) -> Result<String> {
+        with_conn!(&self.db_path, |conn| {
+            async {
+                if let Some(summary) =
+                    repositories::summary::find_one(conn, &SummaryFilter::new().id(id)).await?
+                {
+                    let full_path = self.root_dir.join(summary.file_path.clone());
+                    if let Ok(content) = fs::read_to_string(&full_path).await {
+                        return Ok(content);
+                    }
+                    return Err(anyhow::anyhow!(format!(
+                        "Unable to retrieve summary content: No content at {}.",
+                        summary.file_path
+                    )));
+                }
+                Err(anyhow::anyhow!(
+                    "Unable to retrieve summary content: Summary not found."
+                ))
+            }
+            .await
+        })
     }
 }
 

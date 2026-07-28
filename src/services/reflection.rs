@@ -9,7 +9,9 @@ use crate::models::event::EventType;
 use crate::models::reflection::Reflection;
 use crate::repositories;
 use crate::repositories::meeting::MeetingFilter;
+use crate::repositories::reflection::ReflectionFilter;
 use crate::services::editable::EditableEntity;
+use crate::services::editable::ReadableEntity;
 use crate::services::tag;
 use crate::with_conn;
 use crate::with_conn_mut;
@@ -113,6 +115,32 @@ impl ReflectionService {
         })
     }
 
+    pub async fn get_content(&self, reflection_id: Uuid) -> Result<String> {
+        with_conn!(&self.db_path, |conn| {
+            async {
+                if let Some(reflection) = repositories::reflection::find_one(
+                    conn,
+                    &ReflectionFilter::new().id(reflection_id),
+                )
+                .await?
+                {
+                    let full_path = self.root_dir.join(reflection.file_path.clone());
+                    if let Ok(content) = fs::read_to_string(&full_path).await {
+                        return Ok(content);
+                    }
+                    return Err(anyhow::anyhow!(format!(
+                        "Unable to retrieve reflection content: No content at {}.",
+                        reflection.file_path
+                    )));
+                }
+                Err(anyhow::anyhow!(
+                    "Unable to retrieve reflection content: Reflection not found."
+                ))
+            }
+            .await
+        })
+    }
+
     pub fn full_path(&self, file_path: &str) -> std::path::PathBuf {
         self.root_dir.join(file_path)
     }
@@ -136,6 +164,12 @@ impl EditableEntity for ReflectionService {
     async fn post_edit(&mut self, _id: Uuid, _diff: Vec<DiffEntry>) -> Result<()> {
         // emit updated event and touch reflection
         todo!();
+    }
+}
+
+impl ReadableEntity for ReflectionService {
+    async fn get_content(&self, id: Uuid) -> Result<String> {
+        ReflectionService::get_content(self, id).await
     }
 }
 

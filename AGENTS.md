@@ -80,9 +80,12 @@ action performed by a user in the TUI is routed to a service to actually enact i
 includes reusable sub-components such as `InputBox` (text input with cursor, character filtering,
 and max length), modal widgets (`InputModal`, `MeetingModal`, `StatusModal`), the `editor` module
 (spawning `$EDITOR` on reflection/note files, suspending and restoring the terminal), and
-`ReflectionsView` (listing reflections with resolved labels), and `TimelineView` (full-view-replacement
-entity timeline rendered as markdown via `the-other-tui-markdown`), and `SummaryView` (
-full-view-replacement summary rendered as markdown vie `the-other-tui-markdown`). Views that can create reflections and
+`ReflectionsView` (listing reflections with resolved labels, `Enter` opens a `ContentView` detail
+view), and `TimelineView` (full-view-replacement entity timeline rendered as markdown via
+`the-other-tui-markdown`), and `ContentView` (generic full-view-replacement markdown rendering widget
+shared by the Reflections and Summaries tabs; parameterized over `T: EditableEntityRecord` and
+`S: ReadableEntity<Entity = T>`, with scroll via `Ctrl+u`/`Ctrl+d`, edit via `e`, exit via `Esc`/`q`).
+Views that can create reflections and
 notes (`TodoListView`, `MeetingsView`) own their own `ReflectionService` and `NoteService` clones.
 `TodoListView` and `MeetingsView` also own a `TimelineService` and `Option<TimelineView>` — pressing
 `Enter` on a selected item opens the timeline, which displays all events related to that entity (direct

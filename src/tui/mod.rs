@@ -1,4 +1,5 @@
 mod app;
+mod content_view;
 pub mod editor;
 mod highlight;
 mod input_box;
@@ -9,7 +10,6 @@ mod reflections_view;
 mod splash;
 mod status_modal;
 mod summaries_view;
-mod summary_view;
 mod timeline_view;
 mod todo_list;
 mod version;
