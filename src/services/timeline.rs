@@ -157,7 +157,7 @@ impl TimelineService {
                 .await?;
                 Ok(meeting.map(TimelineEntity::Meeting))
             }
-            EventType::ReflectionCreated => {
+            EventType::ReflectionCreated | EventType::ReflectionUpdated => {
                 let reflection = repositories::reflection::find_one(
                     conn,
                     &ReflectionFilter::new().id(event.entity_id),

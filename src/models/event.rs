@@ -12,6 +12,7 @@ pub enum EventType {
     ReflectionCreated,
     NoteCreated,
     SummaryCreated,
+    ReflectionUpdated,
     SummaryUpdated,
 }
 
@@ -24,6 +25,7 @@ impl fmt::Display for EventType {
             EventType::ReflectionCreated => write!(f, "REFLECTION_CREATED"),
             EventType::NoteCreated => write!(f, "NOTE_CREATED"),
             EventType::SummaryCreated => write!(f, "SUMMARY_CREATED"),
+            EventType::ReflectionUpdated => write!(f, "REFLECTION_UPDATED"),
             EventType::SummaryUpdated => write!(f, "SUMMARY_UPDATED"),
         }
     }
@@ -38,6 +40,7 @@ impl FromStr for EventType {
             "TODO_ITEM_STATUS_CHANGED" => Ok(EventType::TodoItemStatusChanged),
             "MEETING_CREATED" => Ok(EventType::MeetingCreated),
             "REFLECTION_CREATED" => Ok(EventType::ReflectionCreated),
+            "REFLECTION_UPDATED" => Ok(EventType::ReflectionUpdated),
             "NOTE_CREATED" => Ok(EventType::NoteCreated),
             "SUMMARY_CREATED" => Ok(EventType::SummaryCreated),
             other => Err(anyhow::anyhow!("invalid EventType: {other}")),
@@ -107,6 +110,20 @@ mod tests {
                 .parse::<EventType>()
                 .expect("parse failed"),
             EventType::SummaryCreated
+        );
+    }
+
+    #[test]
+    fn reflection_updated_display_and_from_str() {
+        assert_eq!(
+            EventType::ReflectionUpdated.to_string(),
+            "REFLECTION_UPDATED"
+        );
+        assert_eq!(
+            "REFLECTION_UPDATED"
+                .parse::<EventType>()
+                .expect("parse failed"),
+            EventType::ReflectionUpdated
         );
     }
 }

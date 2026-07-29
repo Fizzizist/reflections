@@ -145,7 +145,7 @@ impl TimelineView {
                     .unwrap_or("(no name)");
                 format!("## 📅 Meeting Created — {}\n\n{}\n", time_str, name)
             }
-            EventType::ReflectionCreated => {
+            EventType::ReflectionCreated | EventType::ReflectionUpdated => {
                 let content = entry
                     .entity
                     .as_ref()

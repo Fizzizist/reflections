@@ -58,24 +58,24 @@ impl<T: EditableEntityRecord, S: ReadableEntity<Entity = T>> ContentView<T, S> {
         Ok(())
     }
 
+    fn effective_viewport_height(&self) -> usize {
+        if self.viewport_height > 0 {
+            self.viewport_height
+        } else {
+            24
+        }
+    }
+
     pub async fn handle_key(&mut self, key: KeyEvent, service: &mut S) -> Result<bool> {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => Ok(true),
             KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                let height = if self.viewport_height > 0 {
-                    self.viewport_height
-                } else {
-                    24
-                };
+                let height = self.effective_viewport_height();
                 self.scroll_down(height / 2);
                 Ok(false)
             }
             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                let height = if self.viewport_height > 0 {
-                    self.viewport_height
-                } else {
-                    24
-                };
+                let height = self.effective_viewport_height();
                 self.scroll_up(height / 2);
                 Ok(false)
             }

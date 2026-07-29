@@ -185,6 +185,6 @@ impl SummariesView {
     }
 
     pub fn is_content_view_active(&self) -> bool {
-        self.content_view.is_some()
+        self.is_modal_active()
     }
 }
