@@ -1,3 +1,4 @@
+use crate::models::DiffEntry;
 use crate::models::event::EventType;
 use crate::services::timeline::{TimelineEntity, TimelineEntry, TimelineService};
 use crate::tui::highlight::build_renderer;
@@ -10,7 +11,6 @@ use ratatui::{
     style::{Color, Modifier, Style},
     widgets::{Block, Borders, Paragraph, Wrap},
 };
-use serde_json::Value;
 use std::sync::LazyLock;
 use the_other_tui_markdown::{Renderer, Theme, into_text_with_renderer};
 use uuid::Uuid;
@@ -145,7 +145,7 @@ impl TimelineView {
                     .unwrap_or("(no name)");
                 format!("## 📅 Meeting Created — {}\n\n{}\n", time_str, name)
             }
-            EventType::ReflectionCreated | EventType::ReflectionUpdated => {
+            EventType::ReflectionCreated => {
                 let content = entry
                     .entity
                     .as_ref()
@@ -155,6 +155,9 @@ impl TimelineView {
                     })
                     .unwrap_or("(no content)");
                 format!("## 💭 Reflection — {}\n\n{}\n", time_str, content)
+            }
+            EventType::ReflectionUpdated => {
+                format_diff_entry("💭 Reflection Update", &time_str, &entry.diff)
             }
             EventType::NoteCreated => {
                 let content = entry
@@ -179,32 +182,13 @@ impl TimelineView {
                 format!("## 📊 Summary — {}\n\n{}\n", time_str, content)
             }
             EventType::SummaryUpdated => {
-                let mut content = Vec::new();
-                if let Ok(json) = serde_json::from_str::<Vec<Value>>(&entry.metadata) {
-                    for diff_entry in json {
-                        match diff_entry.get("left") {
-                            Some(left) => match diff_entry.get("right") {
-                                Some(_right) => content.push(format!(" {}", left)),
-                                None => content.push(format!("-{}", left)),
-                            },
-                            None => {
-                                if let Some(right) = diff_entry.get("right") {
-                                    content.push(format!("+{}", right));
-                                }
-                            }
-                        }
-                    }
-                }
-                if !content.is_empty() {
-                    return format!("## 📊 Summary — {}\n\n{}\n", time_str, content.join("\n"));
-                }
-                format!("## 📊 Summary — {}\n\n (no diff content) \n", time_str)
+                format_diff_entry("📊 Summary Update", &time_str, &entry.diff)
             }
         }
     }
 
     fn parse_status_change(&self, metadata: &str) -> String {
-        if let Ok(json) = serde_json::from_str::<Value>(metadata) {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(metadata) {
             let old_status = json
                 .get("old_status")
                 .and_then(|v| v.as_str())
@@ -225,6 +209,25 @@ impl TimelineView {
 
     fn scroll_up(&mut self, half_page: usize) {
         self.scroll_offset = self.scroll_offset.saturating_sub(half_page);
+    }
+}
+
+fn format_diff_entry(emoji_title: &str, time_str: &str, diff: &Option<Vec<DiffEntry>>) -> String {
+    let title = format!("## {} — {}", emoji_title, time_str);
+    match diff {
+        Some(entries) if !entries.is_empty() => {
+            let lines: Vec<String> = entries
+                .iter()
+                .map(|d| match (&d.left, &d.right) {
+                    (Some(l), Some(_r)) => format!(" {}", l),
+                    (Some(l), None) => format!("-{}", l),
+                    (None, Some(r)) => format!("+{}", r),
+                    (None, None) => String::new(),
+                })
+                .collect();
+            format!("{}\n\n```\n{}\n```\n", title, lines.join("\n"))
+        }
+        _ => format!("{}\n\n (no diff content) \n", title),
     }
 }
 
@@ -278,6 +281,7 @@ mod tests {
             entity_id: Uuid::now_v7(),
             event_type: EventType::TodoItemCreated,
             metadata: "{}".to_string(),
+            diff: None,
             created_at: t,
             updated_at: t,
             entity: Some(TimelineEntity::TodoItem(TodoItem {
@@ -300,6 +304,7 @@ mod tests {
                 r#"{{"old_status":"{}","new_status":"{}"}}"#,
                 old_status, new_status
             ),
+            diff: None,
             created_at: t,
             updated_at: t,
             entity: Some(TimelineEntity::TodoItem(TodoItem {
@@ -319,6 +324,7 @@ mod tests {
             entity_id: Uuid::now_v7(),
             event_type: EventType::ReflectionCreated,
             metadata: "{}".to_string(),
+            diff: None,
             created_at: t,
             updated_at: t,
             entity: Some(TimelineEntity::Reflection(ReflectionWithContent {
@@ -341,6 +347,7 @@ mod tests {
             entity_id: Uuid::now_v7(),
             event_type: EventType::NoteCreated,
             metadata: "{}".to_string(),
+            diff: None,
             created_at: t,
             updated_at: t,
             entity: Some(TimelineEntity::Note(NoteWithContent {
@@ -363,6 +370,7 @@ mod tests {
             entity_id: Uuid::now_v7(),
             event_type: EventType::MeetingCreated,
             metadata: "{}".to_string(),
+            diff: None,
             created_at: t,
             updated_at: t,
             entity: Some(TimelineEntity::Meeting(Meeting {
@@ -382,6 +390,7 @@ mod tests {
             entity_id: Uuid::now_v7(),
             event_type: EventType::SummaryCreated,
             metadata: "{}".to_string(),
+            diff: None,
             created_at: t,
             updated_at: t,
             entity: Some(TimelineEntity::Summary(SummaryWithContent {
@@ -394,6 +403,53 @@ mod tests {
                     updated_at: t,
                 },
                 content: content.map(String::from),
+            })),
+        }
+    }
+
+    fn make_reflection_updated_entry(diff: Vec<DiffEntry>) -> TimelineEntry {
+        let t = fixed_time();
+        TimelineEntry {
+            event_id: Uuid::now_v7(),
+            entity_id: Uuid::now_v7(),
+            event_type: EventType::ReflectionUpdated,
+            metadata: serde_json::to_string(&diff).expect("serialize diff failed"),
+            diff: Some(diff),
+            created_at: t,
+            updated_at: t,
+            entity: Some(TimelineEntity::Reflection(ReflectionWithContent {
+                reflection: Reflection {
+                    id: Uuid::now_v7(),
+                    about_id: None,
+                    file_path: "test.md".to_string(),
+                    created_at: t,
+                    updated_at: t,
+                },
+                content: Some("updated reflection content".to_string()),
+            })),
+        }
+    }
+
+    fn make_summary_updated_entry(diff: Vec<DiffEntry>) -> TimelineEntry {
+        let t = fixed_time();
+        TimelineEntry {
+            event_id: Uuid::now_v7(),
+            entity_id: Uuid::now_v7(),
+            event_type: EventType::SummaryUpdated,
+            metadata: serde_json::to_string(&diff).expect("serialize diff failed"),
+            diff: Some(diff),
+            created_at: t,
+            updated_at: t,
+            entity: Some(TimelineEntity::Summary(SummaryWithContent {
+                summary: Summary {
+                    id: Uuid::now_v7(),
+                    file_path: "test.md".to_string(),
+                    start: t,
+                    end: t + Duration::hours(1),
+                    created_at: t,
+                    updated_at: t,
+                },
+                content: Some("updated summary content".to_string()),
             })),
         }
     }
@@ -577,6 +633,58 @@ mod tests {
         };
         let output = render_view(&mut view);
         insta::assert_snapshot!("summary_timeline", output);
+    }
+
+    #[test]
+    fn reflection_updated_render() {
+        let diff = vec![
+            DiffEntry {
+                left: Some("old line".to_string()),
+                right: Some("old line".to_string()),
+            },
+            DiffEntry {
+                left: None,
+                right: Some("new line".to_string()),
+            },
+            DiffEntry {
+                left: Some("removed line".to_string()),
+                right: None,
+            },
+        ];
+        let mut view = TimelineView {
+            entries: vec![make_reflection_updated_entry(diff)],
+            title: "Reflection Timeline".to_string(),
+            scroll_offset: 0,
+            viewport_height: 0,
+        };
+        let output = render_view(&mut view);
+        insta::assert_snapshot!("reflection_updated_timeline", output);
+    }
+
+    #[test]
+    fn summary_updated_render() {
+        let diff = vec![
+            DiffEntry {
+                left: Some("same".to_string()),
+                right: Some("same".to_string()),
+            },
+            DiffEntry {
+                left: Some("removed".to_string()),
+                right: None,
+            },
+            DiffEntry {
+                left: None,
+                right: Some("added".to_string()),
+            },
+        ];
+        let mut view = TimelineView {
+            entries: vec![make_summary_updated_entry(diff)],
+            title: "Summary Timeline".to_string(),
+            scroll_offset: 0,
+            viewport_height: 0,
+        };
+        let output = render_view(&mut view);
+        insta::assert_snapshot!("summary_updated_timeline", output);
     }
 
     fn render_narrow(view: &mut TimelineView) -> String {

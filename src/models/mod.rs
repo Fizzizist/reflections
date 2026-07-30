@@ -5,9 +5,9 @@ pub mod reflection;
 pub mod summary;
 pub mod tag;
 pub mod todo_item;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct DiffEntry {
     pub left: Option<String>,
     pub right: Option<String>,

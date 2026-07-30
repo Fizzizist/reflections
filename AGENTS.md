@@ -131,7 +131,14 @@ both `ReflectionService::cleanup_reflection` and `NoteService::cleanup_note` in 
 using in-memory content. Tags are case-insensitive (stored lowercase) and deduplicated.
 `TimelineService::get_entity_timeline` gathers all events for a given entity (direct events, linked
 reflections via `about_id`, linked notes via `related_to_id`), merges and sorts them oldest-first,
-and resolves entity data with file content for reflections and notes.
+and resolves entity data with file content for reflections and notes. Both `get_timeline` and
+`get_entity_timeline` populate a `diff: Option<Vec<DiffEntry>>` field on `TimelineEntry` — for
+`ReflectionUpdated` and `SummaryUpdated` events, the diff is parsed from the event metadata (a JSON
+array of `{left, right}` line-diff entries); for all other event types, `diff` is `None`. The CLI
+`reflect timeline` command serializes `TimelineEntry` (including `diff`) as JSON to stdout, giving
+consumers structured access to the diff alongside the raw `metadata` string. The TUI `TimelineView`
+renders `ReflectionUpdated` and `SummaryUpdated` entries as diff lines (`+added`/`-removed`/` unchanged`)
+via the shared `format_diff_entry` helper, rather than showing full file content.
 
 ### Repositories
 

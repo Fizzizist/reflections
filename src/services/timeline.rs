@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use tokio::fs;
 use uuid::Uuid;
 
+use crate::models::DiffEntry;
 use crate::models::event::{Event, EventType};
 use crate::models::meeting::Meeting;
 use crate::models::note::Note;
@@ -26,6 +27,7 @@ pub struct TimelineEntry {
     pub entity_id: Uuid,
     pub event_type: EventType,
     pub metadata: String,
+    pub diff: Option<Vec<DiffEntry>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub entity: Option<TimelineEntity>,
@@ -86,8 +88,9 @@ impl TimelineService {
                 entries.push(TimelineEntry {
                     event_id: event.event_id,
                     entity_id: event.entity_id,
-                    event_type: event.event_type,
-                    metadata: event.metadata,
+                    event_type: event.event_type.clone(),
+                    metadata: event.metadata.clone(),
+                    diff: parse_diff(&event.event_type, &event.metadata),
                     created_at: event.created_at,
                     updated_at: event.updated_at,
                     entity,
@@ -128,8 +131,9 @@ impl TimelineService {
                 entries.push(TimelineEntry {
                     event_id: event.event_id,
                     entity_id: event.entity_id,
-                    event_type: event.event_type,
-                    metadata: event.metadata,
+                    event_type: event.event_type.clone(),
+                    metadata: event.metadata.clone(),
+                    diff: parse_diff(&event.event_type, &event.metadata),
                     created_at: event.created_at,
                     updated_at: event.updated_at,
                     entity,
@@ -217,6 +221,15 @@ impl TimelineService {
     async fn read_file_content(&self, file_path: &str) -> Option<String> {
         let full_path = self.root_dir.join(file_path);
         fs::read_to_string(&full_path).await.ok()
+    }
+}
+
+fn parse_diff(event_type: &EventType, metadata: &str) -> Option<Vec<DiffEntry>> {
+    match event_type {
+        EventType::ReflectionUpdated | EventType::SummaryUpdated => {
+            serde_json::from_str::<Vec<DiffEntry>>(metadata).ok()
+        }
+        _ => None,
     }
 }
 
@@ -899,5 +912,39 @@ mod tests {
             "should find ReflectionCreated event"
         );
         assert!(found_note_created, "should find NoteCreated event");
+    }
+
+    #[test]
+    fn parse_diff_extracts_diff_for_updated_events() {
+        let diff_json = r#"[{"left":"old","right":"old"},{"left":null,"right":"new"},{"left":"removed","right":null}]"#;
+        let result = parse_diff(&EventType::ReflectionUpdated, diff_json);
+        let diff = result.expect("should parse diff");
+        assert_eq!(diff.len(), 3);
+        assert_eq!(diff[0].left, Some("old".to_string()));
+        assert_eq!(diff[0].right, Some("old".to_string()));
+        assert_eq!(diff[1].left, None);
+        assert_eq!(diff[1].right, Some("new".to_string()));
+        assert_eq!(diff[2].left, Some("removed".to_string()));
+        assert_eq!(diff[2].right, None);
+    }
+
+    #[test]
+    fn parse_diff_extracts_diff_for_summary_updated() {
+        let diff_json = r#"[{"left":"a","right":"a"}]"#;
+        let result = parse_diff(&EventType::SummaryUpdated, diff_json);
+        assert!(result.is_some());
+        assert_eq!(result.expect("should parse").len(), 1);
+    }
+
+    #[test]
+    fn parse_diff_returns_none_for_created_events() {
+        let result = parse_diff(&EventType::ReflectionCreated, "[]");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn parse_diff_returns_none_on_invalid_metadata() {
+        let result = parse_diff(&EventType::ReflectionUpdated, "not json");
+        assert!(result.is_none());
     }
 }
