@@ -43,6 +43,7 @@ impl FromStr for EventType {
             "REFLECTION_UPDATED" => Ok(EventType::ReflectionUpdated),
             "NOTE_CREATED" => Ok(EventType::NoteCreated),
             "SUMMARY_CREATED" => Ok(EventType::SummaryCreated),
+            "SUMMARY_UPDATED" => Ok(EventType::SummaryUpdated),
             other => Err(anyhow::anyhow!("invalid EventType: {other}")),
         }
     }
@@ -124,6 +125,17 @@ mod tests {
                 .parse::<EventType>()
                 .expect("parse failed"),
             EventType::ReflectionUpdated
+        );
+    }
+
+    #[test]
+    fn summary_updated_display_and_from_str() {
+        assert_eq!(EventType::SummaryUpdated.to_string(), "SUMMARY_UPDATED");
+        assert_eq!(
+            "SUMMARY_UPDATED"
+                .parse::<EventType>()
+                .expect("parse failed"),
+            EventType::SummaryUpdated
         );
     }
 }

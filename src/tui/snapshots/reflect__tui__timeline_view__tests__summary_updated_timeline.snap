@@ -3,7 +3,7 @@ source: src/tui/timeline_view.rs
 expression: output
 ---
 "┌Summary Timeline──────────────────────────────────────────────────────────────┐"
-"│## 📊 Summary — 2024-01-15 10:30                                              │" Hidden by multi-width symbols: [(5, " ")]
+"│## 📊 Summary Update — 2024-01-15 10:30                                       │" Hidden by multi-width symbols: [(5, " ")]
 "│                                                                              │"
 "│ same                                                                         │"
 "│-removed                                                                      │"
