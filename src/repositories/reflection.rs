@@ -172,6 +172,12 @@ pub async fn get_by_id(tx: &Transaction<'_>, id: Uuid) -> Result<Reflection> {
     Err(QueryReturnedNoRows.into())
 }
 
+pub async fn touch(tx: &Transaction<'_>, reflection_id: &Uuid) -> Result<()> {
+    let sql = "UPDATE reflection SET updated_at = CURRENT_TIMESTAMP WHERE reflection_id = ?";
+    tx.execute(sql, vec![reflection_id.to_string()]).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -79,7 +79,7 @@ impl App {
                 note_service.clone(),
                 timeline_service.clone(),
             ),
-            reflections_view: ReflectionsView::new(reflection_service.clone()),
+            reflections_view: ReflectionsView::new(reflection_service.clone(), editor_fn.clone()),
             summaries_view: SummariesView::new(summary_service.clone(), editor_fn.clone()),
             reflection_service,
             note_service,
@@ -218,8 +218,8 @@ pub fn render_app(app: &mut App, frame: &mut ratatui::Frame) {
     let overlay_active = match app.active_tab {
         Tab::TodoList => app.todo_list_view.is_timeline_active(),
         Tab::Meetings => app.meetings_view.is_timeline_active(),
-        Tab::Reflections => false,
-        Tab::Summaries => app.summaries_view.is_summary_view_active(),
+        Tab::Reflections => app.reflections_view.is_content_view_active(),
+        Tab::Summaries => app.summaries_view.is_content_view_active(),
     };
 
     let view_area = if overlay_active {
@@ -628,6 +628,41 @@ mod tests {
             .draw(|frame| render_app(&mut app, frame))
             .expect("failed to draw");
         insta::assert_snapshot!("populated reflections", terminal.backend());
+    }
+
+    #[tokio::test]
+    async fn enter_opens_reflection_detail() {
+        let mut app = test_app().await;
+        app.set_app_editor_fn({
+            Arc::new(|path: &std::path::Path| {
+                std::fs::write(path, "# Reflection\n\nContent here")?;
+                Ok(Vec::new())
+            })
+        });
+
+        let key_r = KeyEvent::new(KeyCode::Char('R'), KeyModifiers::NONE);
+        app.handle_key(key_r)
+            .await
+            .expect("create reflection failed");
+
+        app.active_tab = Tab::Reflections;
+        app.reflections_view
+            .refresh()
+            .await
+            .expect("refresh failed");
+
+        let key_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
+        app.handle_key(key_j).await.expect("select failed");
+
+        let key_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        app.handle_key(key_enter).await.expect("enter failed");
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("terminal creation");
+        terminal
+            .draw(|frame| render_app(&mut app, frame))
+            .expect("failed to draw");
+        insta::assert_snapshot!("reflection detail view", terminal.backend());
     }
 
     #[tokio::test]

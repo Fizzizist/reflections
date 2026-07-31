@@ -80,9 +80,12 @@ action performed by a user in the TUI is routed to a service to actually enact i
 includes reusable sub-components such as `InputBox` (text input with cursor, character filtering,
 and max length), modal widgets (`InputModal`, `MeetingModal`, `StatusModal`), the `editor` module
 (spawning `$EDITOR` on reflection/note files, suspending and restoring the terminal), and
-`ReflectionsView` (listing reflections with resolved labels), and `TimelineView` (full-view-replacement
-entity timeline rendered as markdown via `the-other-tui-markdown`), and `SummaryView` (
-full-view-replacement summary rendered as markdown vie `the-other-tui-markdown`). Views that can create reflections and
+`ReflectionsView` (listing reflections with resolved labels, `Enter` opens a `ContentView` detail
+view), and `TimelineView` (full-view-replacement entity timeline rendered as markdown via
+`the-other-tui-markdown`), and `ContentView` (generic full-view-replacement markdown rendering widget
+shared by the Reflections and Summaries tabs; parameterized over `T: EditableEntityRecord` and
+`S: ReadableEntity<Entity = T>`, with scroll via `Ctrl+u`/`Ctrl+d`, edit via `e`, exit via `Esc`/`q`).
+Views that can create reflections and
 notes (`TodoListView`, `MeetingsView`) own their own `ReflectionService` and `NoteService` clones.
 `TodoListView` and `MeetingsView` also own a `TimelineService` and `Option<TimelineView>` — pressing
 `Enter` on a selected item opens the timeline, which displays all events related to that entity (direct
@@ -128,7 +131,14 @@ both `ReflectionService::cleanup_reflection` and `NoteService::cleanup_note` in 
 using in-memory content. Tags are case-insensitive (stored lowercase) and deduplicated.
 `TimelineService::get_entity_timeline` gathers all events for a given entity (direct events, linked
 reflections via `about_id`, linked notes via `related_to_id`), merges and sorts them oldest-first,
-and resolves entity data with file content for reflections and notes.
+and resolves entity data with file content for reflections and notes. Both `get_timeline` and
+`get_entity_timeline` populate a `diff: Option<Vec<DiffEntry>>` field on `TimelineEntry` — for
+`ReflectionUpdated` and `SummaryUpdated` events, the diff is parsed from the event metadata (a JSON
+array of `{left, right}` line-diff entries); for all other event types, `diff` is `None`. The CLI
+`reflect timeline` command serializes `TimelineEntry` (including `diff`) as JSON to stdout, giving
+consumers structured access to the diff alongside the raw `metadata` string. The TUI `TimelineView`
+renders `ReflectionUpdated` and `SummaryUpdated` entries as diff lines (`+added`/`-removed`/` unchanged`)
+via the shared `format_diff_entry` helper, rather than showing full file content.
 
 ### Repositories
 

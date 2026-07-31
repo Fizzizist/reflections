@@ -13,6 +13,10 @@ pub trait EditableEntity {
     async fn post_edit(&mut self, id: Uuid, diff: Vec<DiffEntry>) -> Result<()>;
 }
 
+pub trait ReadableEntity: EditableEntity {
+    async fn get_content(&self, id: Uuid) -> Result<String>;
+}
+
 pub trait EditableEntityRecord {
     fn id(&self) -> Uuid;
     fn file_path(&self) -> &str;

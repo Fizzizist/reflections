@@ -1,6 +1,8 @@
 use super::splash;
 use crate::models::reflection::Reflection;
 use crate::services::reflection::ReflectionService;
+use crate::tui::content_view::ContentView;
+use crate::tui::editor;
 use anyhow::Result;
 use chrono::Local;
 use crossterm::event::{KeyCode, KeyEvent};
@@ -16,15 +18,19 @@ pub struct ReflectionsView {
     labels: Vec<String>,
     selected_index: Option<usize>,
     service: ReflectionService,
+    editor_fn: editor::EditorFn,
+    content_view: Option<ContentView<Reflection, ReflectionService>>,
 }
 
 impl ReflectionsView {
-    pub fn new(service: ReflectionService) -> Self {
+    pub fn new(service: ReflectionService, editor_fn: editor::EditorFn) -> Self {
         Self {
             items: Vec::new(),
             labels: Vec::new(),
             selected_index: None,
             service,
+            editor_fn,
+            content_view: None,
         }
     }
 
@@ -61,7 +67,30 @@ impl ReflectionsView {
     }
 
     pub async fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
+        if let Some(content_view) = &mut self.content_view {
+            if content_view.handle_key(key, &mut self.service).await? {
+                self.content_view = None;
+                return Ok(false);
+            }
+            content_view.refresh(&self.service).await?;
+            return Ok(true);
+        }
+
         match key.code {
+            KeyCode::Enter
+                if let Some(idx) = self.selected_index
+                    && let Some(item) = self.items.get(idx) =>
+            {
+                self.content_view = Some(
+                    ContentView::open(
+                        &self.service,
+                        item.clone(),
+                        "Reflection",
+                        self.editor_fn.clone(),
+                    )
+                    .await?,
+                );
+            }
             KeyCode::Char('j') | KeyCode::Down if !self.items.is_empty() => {
                 let max = self.items.len().saturating_sub(1);
                 let new_idx = match self.selected_index {
@@ -84,6 +113,11 @@ impl ReflectionsView {
     }
 
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
+        if let Some(content_view) = &mut self.content_view {
+            content_view.render(frame, area);
+            return;
+        }
+
         let block = Block::default().borders(Borders::ALL).title("Reflections");
         let inner = block.inner(area);
 
@@ -127,7 +161,11 @@ impl ReflectionsView {
     }
 
     pub fn is_modal_active(&self) -> bool {
-        false
+        self.content_view.is_some()
+    }
+
+    pub fn is_content_view_active(&self) -> bool {
+        self.is_modal_active()
     }
 }
 
@@ -180,20 +218,26 @@ mod tests {
         KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE)
     }
 
-    async fn create_test_service() -> (ReflectionService, PathBuf, PathBuf) {
+    async fn create_test_service() -> (
+        ReflectionService,
+        PathBuf,
+        PathBuf,
+        tempfile::TempDir,
+        tempfile::TempDir,
+    ) {
         let db_dir = tempdir().expect("tempdir failed");
         let db_path = db_dir.path().join("test.db");
         let _db = Database::open_path(&db_path).await.expect("db open failed");
         let root_dir = tempdir().expect("tempdir failed");
         let root_path = root_dir.path().to_path_buf();
         let service = ReflectionService::new(db_path.clone(), root_path.clone());
-        (service, db_path, root_path)
+        (service, db_path, root_path, db_dir, root_dir)
     }
 
     #[tokio::test]
     async fn j_selects_first_item() {
-        let (service, _db_path, _root_path) = create_test_service().await;
-        let mut view = ReflectionsView::new(service);
+        let (service, _db_path, _root_path, _db_dir, _root_dir) = create_test_service().await;
+        let mut view = ReflectionsView::new(service, editor::default_editor_fn());
         view.set_items(vec![fixed_reflection(), fixed_reflection()]);
 
         view.handle_key(key_j()).await.expect("handle_key failed");
@@ -202,8 +246,8 @@ mod tests {
 
     #[tokio::test]
     async fn j_then_j_selects_second_item() {
-        let (service, _db_path, _root_path) = create_test_service().await;
-        let mut view = ReflectionsView::new(service);
+        let (service, _db_path, _root_path, _db_dir, _root_dir) = create_test_service().await;
+        let mut view = ReflectionsView::new(service, editor::default_editor_fn());
         view.set_items(vec![fixed_reflection(), fixed_reflection()]);
 
         view.handle_key(key_j()).await.expect("handle_key failed");
@@ -213,8 +257,8 @@ mod tests {
 
     #[tokio::test]
     async fn k_at_first_stays_at_first() {
-        let (service, _db_path, _root_path) = create_test_service().await;
-        let mut view = ReflectionsView::new(service);
+        let (service, _db_path, _root_path, _db_dir, _root_dir) = create_test_service().await;
+        let mut view = ReflectionsView::new(service, editor::default_editor_fn());
         view.set_items(vec![fixed_reflection(), fixed_reflection()]);
 
         view.handle_key(key_j()).await.expect("handle_key failed");
@@ -224,18 +268,105 @@ mod tests {
 
     #[tokio::test]
     async fn j_on_empty_list_does_nothing() {
-        let (service, _db_path, _root_path) = create_test_service().await;
-        let mut view = ReflectionsView::new(service);
+        let (service, _db_path, _root_path, _db_dir, _root_dir) = create_test_service().await;
+        let mut view = ReflectionsView::new(service, editor::default_editor_fn());
         view.handle_key(key_j()).await.expect("handle_key failed");
         assert_eq!(view.selected_index(), None);
     }
 
     #[tokio::test]
     async fn k_on_empty_list_does_nothing() {
-        let (service, _db_path, _root_path) = create_test_service().await;
-        let mut view = ReflectionsView::new(service);
+        let (service, _db_path, _root_path, _db_dir, _root_dir) = create_test_service().await;
+        let mut view = ReflectionsView::new(service, editor::default_editor_fn());
         view.handle_key(key_k()).await.expect("handle_key failed");
         assert_eq!(view.selected_index(), None);
+    }
+
+    #[tokio::test]
+    async fn enter_opens_content_view() {
+        let (mut service, _db_path, root_path, _db_dir, _root_dir) = create_test_service().await;
+
+        let reflection = service
+            .create_reflection(None)
+            .await
+            .expect("create failed");
+        let full_path = root_path.join(&reflection.file_path);
+        tokio::fs::write(&full_path, "# Reflection\n\nContent here")
+            .await
+            .expect("write failed");
+
+        let mut view = ReflectionsView::new(service, editor::default_editor_fn());
+        view.init().await.expect("init failed");
+        view.handle_key(key_j()).await.expect("select failed");
+
+        let key_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        view.handle_key(key_enter).await.expect("enter failed");
+
+        assert!(view.is_content_view_active());
+    }
+
+    #[tokio::test]
+    async fn esc_closes_content_view() {
+        let (mut service, _db_path, root_path, _db_dir, _root_dir) = create_test_service().await;
+
+        let reflection = service
+            .create_reflection(None)
+            .await
+            .expect("create failed");
+        let full_path = root_path.join(&reflection.file_path);
+        tokio::fs::write(&full_path, "# Reflection\n\nContent here")
+            .await
+            .expect("write failed");
+
+        let mut view = ReflectionsView::new(service, editor::default_editor_fn());
+        view.init().await.expect("init failed");
+        view.handle_key(key_j()).await.expect("select failed");
+
+        let key_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        view.handle_key(key_enter).await.expect("enter failed");
+        assert!(view.is_content_view_active());
+
+        let key_esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        view.handle_key(key_esc).await.expect("esc failed");
+        assert!(!view.is_content_view_active());
+    }
+
+    #[tokio::test]
+    async fn q_closes_content_view() {
+        let (mut service, _db_path, root_path, _db_dir, _root_dir) = create_test_service().await;
+
+        let reflection = service
+            .create_reflection(None)
+            .await
+            .expect("create failed");
+        let full_path = root_path.join(&reflection.file_path);
+        tokio::fs::write(&full_path, "# Reflection\n\nContent here")
+            .await
+            .expect("write failed");
+
+        let mut view = ReflectionsView::new(service, editor::default_editor_fn());
+        view.init().await.expect("init failed");
+        view.handle_key(key_j()).await.expect("select failed");
+
+        let key_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        view.handle_key(key_enter).await.expect("enter failed");
+        assert!(view.is_content_view_active());
+
+        let key_q = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
+        view.handle_key(key_q).await.expect("q failed");
+        assert!(!view.is_content_view_active());
+    }
+
+    #[tokio::test]
+    async fn enter_with_no_selection_does_nothing() {
+        let (service, _db_path, _root_path, _db_dir, _root_dir) = create_test_service().await;
+        let mut view = ReflectionsView::new(service, editor::default_editor_fn());
+        view.set_items(vec![fixed_reflection()]);
+
+        let key_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        view.handle_key(key_enter).await.expect("enter failed");
+
+        assert!(!view.is_content_view_active());
     }
 
     #[test]

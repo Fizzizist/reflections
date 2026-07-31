@@ -1,5 +1,4 @@
-use crate::models::summary::Summary;
-use crate::services::summary::SummaryService;
+use crate::services::editable::{EditableEntityRecord, ReadableEntity};
 use crate::tui::editor;
 use crate::tui::highlight::build_renderer;
 use anyhow::Result;
@@ -25,62 +24,63 @@ static RENDERER: LazyLock<Renderer> = LazyLock::new(|| {
     build_renderer(theme)
 });
 
-pub struct SummaryView {
-    summary: Summary,
+pub struct ContentView<T: EditableEntityRecord, S: ReadableEntity<Entity = T>> {
+    entity: T,
     content: String,
     scroll_offset: usize,
     viewport_height: usize,
+    title: &'static str,
     editor_fn: editor::EditorFn,
+    _service: std::marker::PhantomData<S>,
 }
 
-impl SummaryView {
+impl<T: EditableEntityRecord, S: ReadableEntity<Entity = T>> ContentView<T, S> {
     pub async fn open(
-        service: &SummaryService,
-        summary: Summary,
+        service: &S,
+        entity: T,
+        title: &'static str,
         editor_fn: editor::EditorFn,
     ) -> Result<Self> {
-        let content = service.get_content(summary.id).await?;
+        let content = service.get_content(entity.id()).await?;
         Ok(Self {
-            summary,
+            entity,
             content,
             scroll_offset: 0,
             viewport_height: 0,
+            title,
             editor_fn,
+            _service: std::marker::PhantomData,
         })
     }
 
-    pub async fn refresh(&mut self, service: &SummaryService) -> Result<()> {
-        self.content = service.get_content(self.summary.id).await?;
+    pub async fn refresh(&mut self, service: &S) -> Result<()> {
+        self.content = service.get_content(self.entity.id()).await?;
         Ok(())
     }
 
-    pub async fn handle_key(
-        &mut self,
-        key: KeyEvent,
-        service: &mut SummaryService,
-    ) -> Result<bool> {
+    fn effective_viewport_height(&self) -> usize {
+        if self.viewport_height > 0 {
+            self.viewport_height
+        } else {
+            24
+        }
+    }
+
+    pub async fn handle_key(&mut self, key: KeyEvent, service: &mut S) -> Result<bool> {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => Ok(true),
             KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                let height = if self.viewport_height > 0 {
-                    self.viewport_height
-                } else {
-                    24
-                };
+                let height = self.effective_viewport_height();
                 self.scroll_down(height / 2);
                 Ok(false)
             }
             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                let height = if self.viewport_height > 0 {
-                    self.viewport_height
-                } else {
-                    24
-                };
+                let height = self.effective_viewport_height();
                 self.scroll_up(height / 2);
                 Ok(false)
             }
             KeyCode::Char('e') => {
-                editor::edit(service, &self.summary, &self.editor_fn).await?;
+                editor::edit(service, &self.entity, &self.editor_fn).await?;
                 Ok(false)
             }
             _ => Ok(false),
@@ -88,7 +88,7 @@ impl SummaryView {
     }
 
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
-        let block = Block::default().borders(Borders::ALL).title("Summary");
+        let block = Block::default().borders(Borders::ALL).title(self.title);
         let inner = block.inner(area);
 
         frame.render_widget(block, area);
@@ -122,14 +122,16 @@ impl SummaryView {
 }
 
 #[cfg(test)]
-impl SummaryView {
-    pub fn new_for_test(summary: Summary, content: &str) -> Self {
+impl<T: EditableEntityRecord + Clone, S: ReadableEntity<Entity = T>> ContentView<T, S> {
+    pub fn new_for_test(entity: T, content: &str, title: &'static str) -> Self {
         Self {
-            summary,
+            entity,
             content: content.to_string(),
             scroll_offset: 0,
             viewport_height: 0,
+            title,
             editor_fn: editor::default_editor_fn(),
+            _service: std::marker::PhantomData,
         }
     }
 
@@ -141,8 +143,14 @@ impl SummaryView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::Database;
+    use crate::models::reflection::Reflection;
+    use crate::models::summary::Summary;
+    use crate::services::reflection::ReflectionService;
+    use crate::services::summary::SummaryService;
     use chrono::{DateTime, Duration, Utc};
     use ratatui::{Terminal, backend::TestBackend};
+    use tempfile::tempdir;
     use uuid::Uuid;
 
     fn fixed_time() -> DateTime<Utc> {
@@ -163,7 +171,18 @@ mod tests {
         }
     }
 
-    fn render_narrow(view: &mut SummaryView) -> String {
+    fn make_reflection() -> Reflection {
+        let t = fixed_time();
+        Reflection {
+            id: Uuid::now_v7(),
+            about_id: None,
+            file_path: "test.md".to_string(),
+            created_at: t,
+            updated_at: t,
+        }
+    }
+
+    fn render_narrow_summary(view: &mut ContentView<Summary, SummaryService>) -> String {
         let backend = TestBackend::new(30, 10);
         let mut terminal = Terminal::new(backend).expect("terminal creation failed");
         terminal
@@ -175,13 +194,17 @@ mod tests {
     #[test]
     fn scroll_to_bottom_with_wrapped_content() {
         let long_content = "This is a very long line that will definitely wrap when rendered in a narrow terminal width of thirty columns and it keeps going on and on to ensure it exceeds the viewport height so we can verify scrolling works correctly with wrapped lines that produce more visual lines than logical lines";
-        let mut view = SummaryView::new_for_test(make_summary(), long_content);
+        let mut view = ContentView::<Summary, SummaryService>::new_for_test(
+            make_summary(),
+            long_content,
+            "Summary",
+        );
 
-        render_narrow(&mut view);
+        render_narrow_summary(&mut view);
         let initial_offset = view.scroll_offset();
 
         view.scroll_offset = 100;
-        render_narrow(&mut view);
+        render_narrow_summary(&mut view);
         let max_after_clamp = view.scroll_offset();
 
         assert!(
@@ -198,13 +221,17 @@ mod tests {
     #[test]
     fn scroll_offset_clamped_to_max_with_wrapping() {
         let long_content = "AaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaBbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbCccccccccccccccccccccccccccccc";
-        let mut view = SummaryView::new_for_test(make_summary(), long_content);
+        let mut view = ContentView::<Summary, SummaryService>::new_for_test(
+            make_summary(),
+            long_content,
+            "Summary",
+        );
 
-        render_narrow(&mut view);
+        render_narrow_summary(&mut view);
         let max_scroll = view.scroll_offset();
 
         view.scroll_offset = 100;
-        render_narrow(&mut view);
+        render_narrow_summary(&mut view);
 
         assert_eq!(
             view.scroll_offset(),
@@ -215,9 +242,6 @@ mod tests {
 
     #[tokio::test]
     async fn scroll_step_uses_viewport_height_after_render() {
-        use crate::db::Database;
-        use tempfile::tempdir;
-
         let db_dir = tempdir().expect("create tempdir failed");
         let db_path = db_dir.path().join("test.db");
         Database::open_path(&db_path).await.expect("db open failed");
@@ -225,9 +249,13 @@ mod tests {
         let mut svc = SummaryService::new(db_path, root_dir.path().to_path_buf());
 
         let long_content = "This is a very long line that will definitely wrap when rendered in a narrow terminal width of thirty columns and it keeps going on and on to ensure it exceeds the viewport height so we can verify scrolling works correctly with wrapped lines that produce more visual lines than logical lines";
-        let mut view = SummaryView::new_for_test(make_summary(), long_content);
+        let mut view = ContentView::<Summary, SummaryService>::new_for_test(
+            make_summary(),
+            long_content,
+            "Summary",
+        );
 
-        render_narrow(&mut view);
+        render_narrow_summary(&mut view);
         let expected_step = view.viewport_height / 2;
 
         let key = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL);
@@ -244,16 +272,17 @@ mod tests {
 
     #[tokio::test]
     async fn no_scroll_when_content_fits_in_viewport() {
-        use crate::db::Database;
-        use tempfile::tempdir;
-
         let db_dir = tempdir().expect("create tempdir failed");
         let db_path = db_dir.path().join("test.db");
         Database::open_path(&db_path).await.expect("db open failed");
         let root_dir = tempdir().expect("create tempdir failed");
         let mut svc = SummaryService::new(db_path, root_dir.path().to_path_buf());
 
-        let mut view = SummaryView::new_for_test(make_summary(), "Short content");
+        let mut view = ContentView::<Summary, SummaryService>::new_for_test(
+            make_summary(),
+            "Short content",
+            "Summary",
+        );
 
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).expect("terminal creation failed");
@@ -292,5 +321,29 @@ mod tests {
             0,
             "Ctrl+u should have no effect when content fits"
         );
+    }
+
+    #[tokio::test]
+    async fn content_view_works_with_reflection_service() {
+        let db_dir = tempdir().expect("create tempdir failed");
+        let db_path = db_dir.path().join("test.db");
+        Database::open_path(&db_path).await.expect("db open failed");
+        let root_dir = tempdir().expect("create tempdir failed");
+        let _svc = ReflectionService::new(db_path, root_dir.path().to_path_buf());
+
+        let mut view = ContentView::<Reflection, ReflectionService>::new_for_test(
+            make_reflection(),
+            "Reflection content",
+            "Reflection",
+        );
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("terminal creation failed");
+        terminal
+            .draw(|frame| view.render(frame, frame.area()))
+            .expect("draw failed");
+
+        assert_eq!(view.scroll_offset(), 0);
+        assert_eq!(view.title, "Reflection");
     }
 }

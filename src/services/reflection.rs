@@ -9,7 +9,9 @@ use crate::models::event::EventType;
 use crate::models::reflection::Reflection;
 use crate::repositories;
 use crate::repositories::meeting::MeetingFilter;
+use crate::repositories::reflection::ReflectionFilter;
 use crate::services::editable::EditableEntity;
+use crate::services::editable::ReadableEntity;
 use crate::services::tag;
 use crate::with_conn;
 use crate::with_conn_mut;
@@ -113,8 +115,71 @@ impl ReflectionService {
         })
     }
 
+    pub async fn get_content(&self, reflection_id: Uuid) -> Result<String> {
+        with_conn!(&self.db_path, |conn| {
+            async {
+                if let Some(reflection) = repositories::reflection::find_one(
+                    conn,
+                    &ReflectionFilter::new().id(reflection_id),
+                )
+                .await?
+                {
+                    let full_path = self.root_dir.join(reflection.file_path.clone());
+                    if let Ok(content) = fs::read_to_string(&full_path).await {
+                        return Ok(content);
+                    }
+                    return Err(anyhow::anyhow!(format!(
+                        "Unable to retrieve reflection content: No content at {}.",
+                        reflection.file_path
+                    )));
+                }
+                Err(anyhow::anyhow!(
+                    "Unable to retrieve reflection content: Reflection not found."
+                ))
+            }
+            .await
+        })
+    }
+
     pub fn full_path(&self, file_path: &str) -> std::path::PathBuf {
         self.root_dir.join(file_path)
+    }
+
+    pub async fn post_edit_reflection(
+        &mut self,
+        reflection_id: &Uuid,
+        diff: Vec<DiffEntry>,
+    ) -> Result<()> {
+        let reflection = with_conn!(&self.db_path, |conn| {
+            async {
+                let filter = ReflectionFilter::new().id(*reflection_id);
+                repositories::reflection::find_one(conn, &filter).await
+            }
+            .await
+        })?
+        .ok_or_else(|| anyhow::anyhow!("Reflection not found"))?;
+
+        let full_path = self.full_path(&reflection.file_path);
+        let content = fs::read_to_string(&full_path)
+            .await
+            .map_err(|e| anyhow::anyhow!("Unable to read reflection file: {}", e))?;
+        let labels = tag::extract_tags(&content);
+
+        with_txn!(&self.db_path, |tx| {
+            repositories::reflection::touch(&tx, reflection_id).await?;
+            let metadata = serde_json::to_string(&diff)?;
+            repositories::event::insert(
+                &tx,
+                *reflection_id,
+                &EventType::ReflectionUpdated,
+                &metadata,
+            )
+            .await?;
+            if !labels.is_empty() {
+                tag::sync_tags(&tx, *reflection_id, &labels).await?;
+            }
+            Ok(())
+        })
     }
 }
 
@@ -133,9 +198,14 @@ impl EditableEntity for ReflectionService {
         self.cleanup_reflection(id).await
     }
 
-    async fn post_edit(&mut self, _id: Uuid, _diff: Vec<DiffEntry>) -> Result<()> {
-        // emit updated event and touch reflection
-        todo!();
+    async fn post_edit(&mut self, id: Uuid, diff: Vec<DiffEntry>) -> Result<()> {
+        self.post_edit_reflection(&id, diff).await
+    }
+}
+
+impl ReadableEntity for ReflectionService {
+    async fn get_content(&self, id: Uuid) -> Result<String> {
+        ReflectionService::get_content(self, id).await
     }
 }
 
@@ -453,5 +523,54 @@ mod tests {
             .await
             .expect("query failed");
         assert!(rows.next().await.expect("fetch failed").is_none());
+    }
+
+    #[tokio::test]
+    async fn post_edit_reflection_creates_updated_event_and_syncs_tags() {
+        let (mut svc, db_path, root_dir, _db_dir, _root_dir_temp) = setup().await;
+
+        let reflection = svc.create_reflection(None).await.expect("create failed");
+
+        // Wait to ensure timestamp difference
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+        let full_path = root_dir.join(&reflection.file_path);
+        fs::write(&full_path, "Edited content with #newtag")
+            .await
+            .expect("write failed");
+
+        let diff = vec![];
+        svc.post_edit_reflection(&reflection.id, diff)
+            .await
+            .expect("post_edit failed");
+
+        let count = query_count(
+            &db_path,
+            "SELECT COUNT(*) FROM event WHERE entity_id = ? AND event_type = 'REFLECTION_UPDATED'",
+            [reflection.id.to_string()],
+        )
+        .await;
+        assert_eq!(count, 1);
+
+        let updated = svc
+            .list_reflections()
+            .await
+            .expect("list failed")
+            .into_iter()
+            .find(|r| r.id == reflection.id)
+            .expect("reflection not found");
+
+        // Verify that updated_at changed (touch worked)
+        assert!(
+            updated.updated_at > reflection.updated_at,
+            "updated_at should be later than the original updated_at"
+        );
+
+        let db = Database::open_path(&db_path).await.expect("db open failed");
+        let tags = repositories::tag::find_tags_for_entity(db.conn(), reflection.id)
+            .await
+            .expect("find_tags failed");
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].label, "newtag");
     }
 }
